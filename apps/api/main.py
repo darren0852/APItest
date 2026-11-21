@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, date, timedelta
 from decimal import Decimal
+import asyncio
 import httpx, uuid, time
 import os
 from sqlalchemy import text
@@ -688,8 +689,8 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             route_db.close()
         RATE_LIMITER.increment_concurrency(api_key.id)
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(endpoint_url, headers=upstream_headers, json=upstream_body, timeout=60.0)
+            async with httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(70.0, connect=15.0)) as client:
+                resp = await asyncio.wait_for(client.post(endpoint_url, headers=upstream_headers, json=upstream_body), timeout=75.0)
                 if resp.status_code != 200:
                     error_detail = f"Supplier error: {resp.text}"
                     db_error = SessionLocal()
