@@ -23,7 +23,7 @@ interface DashboardData {
   recent_usage: RecentUsageItem[];
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "https://api.vemixapp.com";
 
 function formatTokens(value: number) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;

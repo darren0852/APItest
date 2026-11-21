@@ -17,7 +17,7 @@ export default function Home() {
         </div>
         <div className="card">
           <h2 className="section-title">调用端点</h2>
-          <div className="mono" style={{ display: "block", overflowWrap: "anywhere" }}>POST {`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}`}/v1/chat/completions</div>
+          <div className="mono" style={{ display: "block", overflowWrap: "anywhere" }}>POST {`${"https://api.vemixapp.com"}`}/v1/chat/completions</div>
           <div className="stat-mini" style={{ marginTop: 12 }}>使用客户 API Key 作为 Bearer Token。系统会自动预留余额并按实际用量结算。</div>
         </div>
       </div>

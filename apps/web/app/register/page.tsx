@@ -16,7 +16,7 @@ export default function Register() {
     setLoading(true);
     setError("");
     try {
-      const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API = "https://api.vemixapp.com";
       const response = await fetch(`${API}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

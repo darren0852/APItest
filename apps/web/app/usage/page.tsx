@@ -15,7 +15,7 @@ export default function Usage() {
     const token = localStorage.getItem("token");
     if (!token) { router.push("/login"); return; }
     setEmail(localStorage.getItem("email") || "");
-    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const API = "https://api.vemixapp.com";
     fetch(`${API}/me/usage`, { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => response.status === 401 ? router.push("/login") : response.json())
       .then((data) => Array.isArray(data) && setRecords(data));

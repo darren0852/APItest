@@ -14,7 +14,7 @@ interface SupplierRoute { id: number; model_name: string; upstream_model: string
 interface LedgerEntry { id: number; user_id: number; type: string; amount: number; balance_after: number; reference: string; created_at: string; }
 interface AuditEntry { id: number; admin: string; action: string; target_type: string | null; target_id: string | null; detail: string | null; created_at: string; }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "https://api.vemixapp.com";
 
 export default function AdminPage() {
   const [tab, setTab] = useState("stats");

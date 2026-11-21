@@ -26,7 +26,7 @@ interface Balance { available: number; reserved: number; currency: string; }
 interface Entitlement { id: number; plan_name: string; expires_at: string; remaining_tokens: number | null; daily_requests_used: number; daily_request_limit: number | null; }
 interface KeyGroup { id: string; name: string; description: string; }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "https://api.vemixapp.com";
 const emptyForm = { name: "", group_name: "", quota_limit: "", rate_limit: "", expires_at: "" };
 
 export default function ApiKeysPage() {

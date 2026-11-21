@@ -11,7 +11,7 @@ export default function Topup() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const amounts = [10, 20, 50, 100, 200];
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API = "https://api.vemixapp.com";
 
   const submit = async (value: number) => {
     const token = localStorage.getItem("token");

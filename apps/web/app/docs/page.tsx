@@ -6,12 +6,12 @@ export default function Docs() {
       <div className="grid grid-2">
         <div className="card">
           <h2 className="section-title">Base URL 与认证</h2>
-          <div className="mono" style={{ display: "block", marginBottom: 12 }}>{`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}`}/v1</div>
+          <div className="mono" style={{ display: "block", marginBottom: 12 }}>{`${"https://api.vemixapp.com"}`}/v1</div>
           <pre className="mono" style={{ whiteSpace: "pre-wrap", padding: 14, borderRadius: 12, overflow: "auto" }}>Authorization: Bearer sk-cust-YOUR_KEY_HERE</pre>
         </div>
         <div className="card">
           <h2 className="section-title">Chat Completions 请求示例</h2>
-          <pre className="mono" style={{ whiteSpace: "pre-wrap", padding: 14, borderRadius: 12, overflow: "auto" }}>{`curl -X POST ${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/v1/chat/completions \\
+          <pre className="mono" style={{ whiteSpace: "pre-wrap", padding: 14, borderRadius: 12, overflow: "auto" }}>{`curl -X POST ${"https://api.vemixapp.com"}/v1/chat/completions \\
   -H "Authorization: Bearer sk-cust-YOUR_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{ "model": "mock-model", "messages": [{"role": "user", "content": "Hello!"}] }'`}</pre>

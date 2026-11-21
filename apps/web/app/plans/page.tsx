@@ -12,7 +12,7 @@ export default function Plans() {
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
   const router = useRouter();
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API = "https://api.vemixapp.com";
 
   useEffect(() => {
     const token = localStorage.getItem("token");

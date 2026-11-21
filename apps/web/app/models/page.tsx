@@ -64,7 +64,7 @@ interface PublicGroup {
   models: PublicModel[];
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "https://api.vemixapp.com";
 
 function formatRM(value: number | undefined, fallback = "—") {
   if (typeof value !== "number" && typeof value !== "string") return fallback;
