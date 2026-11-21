@@ -29,7 +29,7 @@ export default function Register() {
       }
       localStorage.setItem("token", data.token);
       localStorage.setItem("email", data.email);
-      router.push("/dashboard");
+      router.push(data.is_admin ? "/admin" : "/dashboard");
     } catch {
       setError("Cannot connect to server");
     } finally {

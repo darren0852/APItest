@@ -315,7 +315,7 @@ async def login(user: UserCreate):
         if db_user.status not in ("active", "admin"):
             raise HTTPException(status_code=403, detail="Account suspended")
         token = create_jwt(db_user.id, db_user.email)
-        return {"message": "Logged in", "user_id": db_user.id, "email": db_user.email, "token": token}
+        return {"message": "Logged in", "user_id": db_user.id, "email": db_user.email, "token": token, "status": db_user.status, "is_admin": db_user.status == "admin"}
     finally:
         db.close()
 

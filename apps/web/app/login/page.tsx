@@ -29,10 +29,7 @@ export default function Login() {
       }
       localStorage.setItem("token", data.token);
       localStorage.setItem("email", data.email);
-      const adminCheck = await fetch(`${API}/admin/stats`, {
-        headers: { Authorization: `Bearer ${data.token}` },
-      });
-      router.push(adminCheck.ok ? "/admin" : "/dashboard");
+      router.push(data.is_admin ? "/admin" : "/dashboard");
     } catch {
       setError("Cannot connect to server");
     } finally {
