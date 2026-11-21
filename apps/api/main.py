@@ -1030,7 +1030,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
+                "Connection": "close",
                 "X-Accel-Buffering": "no",
             },
         )
