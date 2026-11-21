@@ -655,7 +655,7 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             raise HTTPException(status_code=403, detail="当前分组不支持该模型协议")
         supplier_route_id = int(supplier_route.id)
         user = db.query(User).filter(User.id == api_key.user_id).first()
-        if user is None or user.status != "active":
+        if user is None or user.status not in ("active", "admin"):
             raise HTTPException(status_code=403, detail="Account suspended")
         ent_result = PlanService.check_entitlement(db, user.id, req.model)
         if ent_result[0] == "plan":
