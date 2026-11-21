@@ -636,7 +636,7 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         raise HTTPException(status_code=403, detail="该模型不属于当前密钥分组")
     estimated_input = sum(len(str(m.get("content", ""))) for m in req.messages) // 4 + 1
     estimated_output = 256
-    estimated_cost = (estimated_input * price["input"] + estimated_output * price["output"])
+    estimated_cost = (estimated_input * price["input"] + estimated_output * price["output"]) / Decimal("1000000")
     estimated_cost = max(estimated_cost, Decimal("0.01"))
     rate_limit = api_key.rate_limit or 60
     rl_ok, remaining = RATE_LIMITER.check(f"rl:{api_key.id}", rate_limit, 60)
@@ -770,7 +770,7 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         + cached_tokens * cache_read_price
         + cache_creation_tokens * cache_write_price
         + output_tokens * price["output"]
-    )
+    ) / Decimal("1000000")
     db3 = SessionLocal()
     try:
         if use_plan:
