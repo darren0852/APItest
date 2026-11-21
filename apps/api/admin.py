@@ -57,6 +57,7 @@ class SupplierCreate(BaseModel):
 
 class SupplierRouteCreate(BaseModel):
     model_name: str
+    model_config = {"protected_namespaces": ()}
     upstream_model: str
     endpoint_url: str
     api_key: str
