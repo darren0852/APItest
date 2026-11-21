@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.next/
+node_modules/
+*.log
+fastapi_run.log
+litellm_output.log
+chrome-profile/
+*.png
