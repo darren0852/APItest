@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, date, timedelta
@@ -60,6 +61,7 @@ class PlanPurchaseRequest(BaseModel):
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: list
+    system: Optional[str] = None
     stream: Optional[bool] = False
     max_tokens: Optional[int] = None
 
@@ -703,7 +705,31 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
         if current_supplier_route is None:
             raise HTTPException(status_code=404, detail="Supplier route disappeared")
-        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, req.messages, False)
+        system_text = str(req.system or "")
+        messages_for_supplier = []
+        if system_text:
+            messages_for_supplier.append({"role": "system", "content": system_text})
+        for item in req.messages:
+            role = item.get("role") if isinstance(item, dict) else "user"
+            content = item.get("content", "") if isinstance(item, dict) else ""
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get("type", "")
+                        if block_type == "text":
+                            text_parts.append(str(block.get("text", "")))
+                        elif block_type == "tool_result":
+                            nested = block.get("content", "")
+                            text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
+                        elif block_type == "tool_use":
+                            text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
+                content = "\n".join(text_parts)
+            messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
+        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
+        upstream_body["max_tokens"] = req.max_tokens or 4096
+        if current_supplier_route.protocol == "anthropic" and system_text:
+            upstream_body["system"] = system_text
     finally:
         route_db.close()
     RATE_LIMITER.increment_concurrency(api_key.id)
@@ -854,11 +880,152 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
         if current_supplier_route is None:
             raise HTTPException(status_code=404, detail="Supplier route disappeared")
-        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, req.messages, False)
+        system_text = str(req.system or "")
+        messages_for_supplier = []
+        if system_text:
+            messages_for_supplier.append({"role": "system", "content": system_text})
+        for item in req.messages:
+            role = item.get("role") if isinstance(item, dict) else "user"
+            content = item.get("content", "") if isinstance(item, dict) else ""
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get("type", "")
+                        if block_type == "text":
+                            text_parts.append(str(block.get("text", "")))
+                        elif block_type == "tool_result":
+                            nested = block.get("content", "")
+                            text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
+                        elif block_type == "tool_use":
+                            text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
+                content = "\n".join(text_parts)
+            messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
+        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
+        upstream_body["max_tokens"] = req.max_tokens or 4096
+        if current_supplier_route.protocol == "anthropic" and system_text:
+            upstream_body["system"] = system_text
     finally:
         route_db.close()
     if "max_tokens" not in json.loads(json.dumps(upstream_body)):
         upstream_body["max_tokens"] = 4096
+    if req.stream:
+        def anthropic_stream():
+            text_parts = []
+            stream_usage = {}
+            try:
+                with httpx.stream(
+                    "POST",
+                    endpoint_url,
+                    headers=upstream_headers,
+                    json=upstream_body,
+                    timeout=90.0,
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = resp.read().decode("utf-8", "ignore")[:500]
+                        payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":detail}}, ensure_ascii=False)
+                        yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
+                        WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+                        return
+                    yield (
+                        "event: message_start\ndata: " + json.dumps({
+                            "type": "message_start",
+                            "message": {
+                                "id": f"msg_{request_id}",
+                                "type": "message",
+                                "role": "assistant",
+                                "model": req.model,
+                                "content": [],
+                                "stop_reason": None,
+                                "stop_sequence": None,
+                                "usage": {"input_tokens": estimated_input, "output_tokens": 0},
+                            },
+                        }, ensure_ascii=False) + "\n\n"
+                    ).encode("utf-8")
+                    yield (
+                        "event: content_block_start\ndata: " + json.dumps({
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        }) + "\n\n"
+                    ).encode("utf-8")
+                    for raw_line in resp.iter_lines():
+                        line = raw_line.decode("utf-8", "ignore") if isinstance(raw_line, bytes) else raw_line
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except Exception:
+                            continue
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
+                        delta = ((chunk.get("choices") or [{}])[0]).get("delta", {})
+                        piece = delta.get("content") or ""
+                        if not piece:
+                            continue
+                        text_parts.append(str(piece))
+                        yield (
+                            "event: content_block_delta\ndata: " + json.dumps({
+                                "type": "content_block_delta",
+                                "index": 0,
+                                "delta": {"type": "text_delta", "text": piece},
+                            }, ensure_ascii=False) + "\n\n"
+                        ).encode("utf-8")
+                    yield (
+                        "event: content_block_stop\ndata: " + json.dumps({
+                            "type": "content_block_stop",
+                            "index": 0,
+                        }) + "\n\n"
+                    ).encode("utf-8")
+                    output_tokens = stream_usage.get("completion_tokens") or max(len("".join(text_parts)) // 4, 1)
+                    yield (
+                        "event: message_delta\ndata: " + json.dumps({
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                            "usage": {"output_tokens": output_tokens},
+                        }, ensure_ascii=False) + "\n\n"
+                    ).encode("utf-8")
+                    yield "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".encode("utf-8")
+                    input_tokens = stream_usage.get("prompt_tokens") or estimated_input
+                    prompt_details = stream_usage.get("prompt_tokens_details") or {}
+                    cached_tokens = prompt_details.get("cached_tokens") or 0
+                    cache_creation_tokens = prompt_details.get("cache_creation_input_tokens") or 0
+                    uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
+                    actual_cost = (
+                        uncached_input * price["input"]
+                        + cached_tokens * price.get("cache_read", Decimal("0"))
+                        + cache_creation_tokens * price.get("cache_write", Decimal("0"))
+                        + output_tokens * price["output"]
+                    ) / Decimal("1000000")
+                    db3 = SessionLocal()
+                    try:
+                        WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+                        route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+                        if route_db3:
+                            route_db3.key_status = "healthy"
+                            route_db3.last_error = None
+                        db3.commit()
+                    finally:
+                        db3.close()
+            except Exception as exc:
+                if not text_parts:
+                    payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":str(exc)}}, ensure_ascii=False)
+                    yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
+                WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            finally:
+                RATE_LIMITER.decrement_concurrency(api_key.id)
+        return StreamingResponse(
+            anthropic_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
     RATE_LIMITER.increment_concurrency(api_key.id)
     try:
         try:
