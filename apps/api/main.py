@@ -331,6 +331,7 @@ async def create_api_key(key: APIKeyCreate, user: User = Depends(get_current_use
             user_id=user.id,
             key_hash=key_hash,
             prefix=prefix,
+            raw_key=raw,
             name=key.name,
             group_name=key.group_name,
             quota_limit=Decimal(str(key.quota_limit)) if key.quota_limit and key.quota_limit > 0 else None,
@@ -368,6 +369,7 @@ async def list_api_keys(user: User = Depends(get_current_user)):
             result.append({
                 "id": k.id,
                 "prefix": k.prefix,
+                "raw_key": k.raw_key,
                 "name": k.name,
                 "group_name": k.group_name,
                 "status": k.status,

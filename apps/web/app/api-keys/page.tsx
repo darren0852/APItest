@@ -7,6 +7,7 @@ import AppShell from "../components/AppShell";
 
 interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cost: number; }
 interface ApiKey {
+  raw_key?: string | null;
   id: number;
   prefix: string;
   name: string;
@@ -238,7 +239,7 @@ export default function ApiKeysPage() {
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <code className="mono">{key.prefix}…</code>
-                        <button className="button button-ghost" style={{ padding: 0 }} onClick={() => { const full = savedFullKeys[key.id]; navigator.clipboard.writeText(full || key.prefix); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{savedFullKeys[key.id] ? "复制完整密钥" : "复制前缀"}</button>
+                        <button className="button button-ghost" style={{ padding: 0 }} onClick={() => { const full = key.raw_key || savedFullKeys[key.id]; navigator.clipboard.writeText(full || key.prefix); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{(key.raw_key || savedFullKeys[key.id]) ? "复制完整密钥" : "复制前缀"}</button>
                       </div>
                     </td>
                     <td>

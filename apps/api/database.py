@@ -34,6 +34,7 @@ class APIKey(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     key_hash = Column(String, unique=True, nullable=False, index=True)
     prefix = Column(String, nullable=False)
+    raw_key = Column(String, nullable=True)  # TEST ONLY: store plaintext for easy copying, remove before production
     name = Column(String, default="default")
     status = Column(String, default="active")
     group_name = Column(String, nullable=True)
