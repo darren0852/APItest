@@ -35,6 +35,7 @@ export default function ApiKeysPage() {
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [email, setEmail] = useState("");
   const [newKey, setNewKey] = useState("");
+  const [savedFullKeys, setSavedFullKeys] = useState<Record<number, string>>({});
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -107,7 +108,9 @@ export default function ApiKeysPage() {
       });
       const data = await response.json();
       if (response.ok) {
-        closeModal();
+        setNewKey(data.key);
+        setSavedFullKeys((prev) => ({ ...prev, [data.id]: data.key }));
+        setModal(null);
         await load(token);
       } else setError(data.detail || "创建 Key 失败");
     } catch { setError("服务器错误"); } finally { setSaving(false); }
@@ -235,7 +238,7 @@ export default function ApiKeysPage() {
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <code className="mono">{key.prefix}…</code>
-                        <button className="button button-ghost" style={{ padding: 0 }} onClick={() => { navigator.clipboard.writeText(key.prefix); setCopied(true); }}>复制</button>
+                        <button className="button button-ghost" style={{ padding: 0 }} onClick={() => { const full = savedFullKeys[key.id]; navigator.clipboard.writeText(full || key.prefix); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{savedFullKeys[key.id] ? "复制完整密钥" : "复制前缀"}</button>
                       </div>
                     </td>
                     <td>
@@ -284,8 +287,17 @@ export default function ApiKeysPage() {
         </div>
         {keys.length === 0 && <div className="empty">还没有 API Key。充值后点击“创建密钥”。</div>}
       </div>
-
-      {modal && (
+      {newKey && (
+        <div className="card" style={{ marginTop: 16, borderColor: "var(--accent)" }}>
+          <strong>密钥创建成功</strong>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+            <code className="mono" style={{ overflowWrap: "anywhere" }}>{newKey}</code>
+            <button className="button button-primary" style={{ whiteSpace: "nowrap" }} onClick={() => { navigator.clipboard.writeText(newKey); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? "已复制 ✓" : "复制完整密钥"}</button>
+          </div>
+          <div className="stat-mini" style={{ marginTop: 8 }}>完整密钥只显示这一次，请立即复制保存。</div>
+        </div>
+      )}
+{modal && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="card-title">
