@@ -61,7 +61,7 @@ class PlanPurchaseRequest(BaseModel):
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: list
-    system: Optional[str] = None
+    system: Optional[object] = None
     stream: Optional[bool] = False
     max_tokens: Optional[int] = None
 
@@ -880,7 +880,15 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
         if current_supplier_route is None:
             raise HTTPException(status_code=404, detail="Supplier route disappeared")
-        system_text = str(req.system or "")
+        if isinstance(req.system, list):
+            system_text = "\n".join(
+                str(block.get("text", "")) if isinstance(block, dict) and block.get("type") == "text" else str(block)
+                for block in req.system
+            )
+        elif req.system is None:
+            system_text = ""
+        else:
+            system_text = str(req.system)
         messages_for_supplier = []
         if system_text:
             messages_for_supplier.append({"role": "system", "content": system_text})
