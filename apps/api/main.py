@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -96,6 +97,24 @@ def validate_api_key(credentials: HTTPAuthorizationCredentials = Depends(securit
         if total_used >= api_key.quota_limit:
             raise HTTPException(status_code=402, detail="API Key quota limit reached")
     return api_key
+
+
+def validate_api_key_raw(raw_key: str) -> APIKey:
+    if not KEY_MANAGER.validate_format(raw_key):
+        raise HTTPException(status_code=401, detail="Invalid API Key format")
+    key_hash = KEY_MANAGER.hash_key(raw_key)
+    db_v = SessionLocal()
+    try:
+        db_key = db_v.query(APIKey).filter(APIKey.key_hash == key_hash).first()
+        if db_key is None:
+            raise HTTPException(status_code=401, detail="API Key not found or revoked")
+        if db_key.status != "active":
+            raise HTTPException(status_code=403, detail="API Key disabled")
+        if db_key.expires_at and db_key.expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="API Key expired")
+        return db_key
+    finally:
+        db_v.close()
 
 @app.get("/me/model-groups")
 async def get_model_groups(user: User = Depends(get_current_user)):
@@ -782,3 +801,151 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         db3.close()
     result["request_id"] = request_id
     return result
+
+@app.post("/v1/messages")
+async def proxy_messages(request: Request, req: ChatCompletionRequest):
+    api_key = await _resolve_api_key(request)
+    price_db = SessionLocal()
+    try:
+        price = get_model_price(price_db, req.model)
+    finally:
+        price_db.close()
+    if price is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
+    if price.get("group") != api_key.group_name:
+        raise HTTPException(status_code=403, detail="该模型不属于当前密钥分组")
+    estimated_input = sum(len(str(m.get("content", ""))) for m in req.messages) // 4 + 1
+    estimated_output = 256
+    estimated_cost = (estimated_input * price["input"] + estimated_output * price["output"]) / Decimal("1000000")
+    estimated_cost = max(estimated_cost, Decimal("0.01"))
+    rate_limit = api_key.rate_limit or 60
+    rl_ok, remaining = RATE_LIMITER.check(f"rl:{api_key.id}", rate_limit, 60)
+    if not rl_ok:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded: {rate_limit} requests/minute")
+    request_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        supplier_route = get_supplier_route(db, req.model)
+        if supplier_route is None:
+            raise HTTPException(status_code=404, detail=f"No active supplier route for model: {req.model}")
+        supplier_route_id = int(supplier_route.id)
+        user = db.query(User).filter(User.id == api_key.user_id).first()
+        if user is None or user.status not in ("active", "admin"):
+            raise HTTPException(status_code=403, detail="Account suspended")
+        ent_result = PlanService.check_entitlement(db, user.id, req.model)
+        if ent_result[0] == "plan":
+            use_plan = True
+        elif ent_result[0] == "reject":
+            raise HTTPException(status_code=402, detail=ent_result[1])
+        else:
+            if not WALLET_SERVICE.check_balance(db, user.id, estimated_cost):
+                raise HTTPException(status_code=402, detail="Insufficient balance. Please top up.")
+            WALLET_SERVICE.reserve(db, user.id, estimated_cost)
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Billing error: {str(e)}")
+    finally:
+        db.close()
+    route_db = SessionLocal()
+    try:
+        current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if current_supplier_route is None:
+            raise HTTPException(status_code=404, detail="Supplier route disappeared")
+        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, req.messages, False)
+    finally:
+        route_db.close()
+    if "max_tokens" not in json.loads(json.dumps(upstream_body)):
+        upstream_body["max_tokens"] = 4096
+    RATE_LIMITER.increment_concurrency(api_key.id)
+    try:
+        try:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: httpx.post(endpoint_url, headers=upstream_headers, json=upstream_body, timeout=60.0)
+                ),
+                timeout=75.0,
+            )
+        except Exception:
+            WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            raise HTTPException(status_code=504, detail="Supplier timeout")
+    finally:
+        pass
+    if resp.status_code != 200:
+        db_error = SessionLocal()
+        try:
+            route_error = db_error.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+            if route_error:
+                route_error.key_status = "error"
+                route_error.last_error = f"HTTP {resp.status_code}: {resp.text[:500]}"
+                db_error.commit()
+        finally:
+            db_error.close()
+        WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+        RATE_LIMITER.decrement_concurrency(api_key.id)
+        raise HTTPException(status_code=resp.status_code, detail=f"Supplier error: {resp.text}")
+    result = resp.json()
+    # Convert OpenAI-shaped response to Anthropic /v1/messages format for Claude Code compatibility
+    if "choices" in result and "content" not in result:
+        choice0 = (result.get("choices") or [{}])[0]
+        msg0 = choice0.get("message", {})
+        openai_usage = result.get("usage", {})
+        result = {
+            "id": result.get("id") or "msg_" + str(uuid.uuid4()),
+            "type": "message",
+            "role": "assistant",
+            "model": req.model,
+            "content": [{"type": "text", "text": msg0.get("content", "")}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": openai_usage.get("prompt_tokens", 0),
+                "output_tokens": openai_usage.get("completion_tokens", 0),
+                "cache_read_input_tokens": (openai_usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0,
+                "cache_creation_input_tokens": (openai_usage.get("prompt_tokens_details") or {}).get("cache_creation_input_tokens", 0) or 0,
+            },
+        }
+    db_success = SessionLocal()
+    try:
+        route_success = db_success.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if route_success:
+            route_success.key_status = "healthy"
+            route_success.last_error = None
+            db_success.commit()
+    finally:
+        db_success.close()
+    usage = result.get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    total_tokens = input_tokens + output_tokens
+    cached_tokens = usage.get("cache_read_input_tokens", 0) or 0
+    cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
+    uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
+    actual_cost = (
+        uncached_input * price["input"]
+        + cached_tokens * price.get("cache_read", Decimal("0"))
+        + cache_creation_tokens * price.get("cache_write", Decimal("0"))
+        + output_tokens * price["output"]
+    ) / Decimal("1000000")
+    db3 = SessionLocal()
+    try:
+        WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+        db3.commit()
+    finally:
+        db3.close()
+    RATE_LIMITER.decrement_concurrency(api_key.id)
+    result["model"] = req.model
+    return result
+
+async def _resolve_api_key(request: Request) -> APIKey:
+    auth = request.headers.get("authorization") or ""
+    xkey = request.headers.get("x-api-key") or ""
+    if auth.lower().startswith("bearer "):
+        raw = auth.split(" ", 1)[1].strip()
+    elif xkey:
+        raw = xkey.strip()
+    else:
+        raise HTTPException(status_code=401, detail="Missing API Key")
+    return validate_api_key_raw(raw)
