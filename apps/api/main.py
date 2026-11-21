@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime, timezone, date, timedelta
 from decimal import Decimal
 import asyncio
+import json
 import httpx, uuid, time
 import os
 from sqlalchemy import text
@@ -678,80 +679,63 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         raise HTTPException(status_code=500, detail=f"Billing error: {str(e)}")
     finally:
         db.close()
+    route_db = SessionLocal()
     try:
-        route_db = SessionLocal()
+        current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if current_supplier_route is None:
+            raise HTTPException(status_code=404, detail="Supplier route disappeared")
+        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, req.messages, False)
+    finally:
+        route_db.close()
+    RATE_LIMITER.increment_concurrency(api_key.id)
+    try:
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: httpx.post(endpoint_url, headers=upstream_headers, json=upstream_body, timeout=60.0)
+            ),
+            timeout=75.0,
+        )
+    except asyncio.TimeoutError:
+        resp = None
+        raise HTTPException(status_code=504, detail="Supplier timeout")
+    if isinstance(resp, httpx.Response) and resp.status_code != 200:
+        error_detail = f"Supplier error: {resp.text}"
+        db_error = SessionLocal()
         try:
-            current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-            if current_supplier_route is None:
-                raise HTTPException(status_code=404, detail="Supplier route disappeared")
-            endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, req.messages, False)
+            route_error = db_error.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+            if route_error:
+                route_error.key_status = "error"
+                route_error.last_error = f"HTTP {resp.status_code}: {resp.text[:500]}"
+                db_error.commit()
         finally:
-            route_db.close()
-        RATE_LIMITER.increment_concurrency(api_key.id)
-        try:
-            async with httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(70.0, connect=15.0)) as client:
-                resp = await asyncio.wait_for(client.post(endpoint_url, headers=upstream_headers, json=upstream_body), timeout=75.0)
-                if resp.status_code != 200:
-                    error_detail = f"Supplier error: {resp.text}"
-                    db_error = SessionLocal()
-                    try:
-                        route_error = db_error.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-                        if route_error:
-                            route_error.key_status = "error"
-                            route_error.last_error = f"HTTP {resp.status_code}: {resp.text[:500]}"
-                            db_error.commit()
-                    finally:
-                        db_error.close()
-                    db_fail = SessionLocal()
-                    try:
-                        if not use_plan:
-                            WALLET_SERVICE.settle(db_fail, api_key.user_id, request_id, estimated_cost, Decimal("0"))
-                        db_fail.commit()
-                    finally:
-                        db_fail.close()
-                    raise HTTPException(status_code=resp.status_code, detail=error_detail)
-                result = resp.json()
-                if current_supplier_route.protocol == "anthropic":
-                    result = normalize_anthropic_response(req.model, result)
-                else:
-                    result["model"] = req.model
-            db_success = SessionLocal()
-            try:
-                route_success = db_success.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-                if route_success:
-                    route_success.key_status = "healthy"
-                    route_success.last_error = None
-                    db_success.commit()
-            finally:
-                db_success.close()
-        finally:
-            RATE_LIMITER.decrement_concurrency(api_key.id)
-    except httpx.RequestError as error:
-        db2 = SessionLocal()
+            db_error.close()
+        db_fail = SessionLocal()
         try:
             if not use_plan:
-                WALLET_SERVICE.settle(db2, api_key.user_id, request_id, estimated_cost, Decimal("0"))
-            db2.commit()
-        except Exception:
-            db2.rollback()
+                WALLET_SERVICE.settle(db_fail, api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            db_fail.commit()
         finally:
-            db2.close()
-        if isinstance(error, httpx.ConnectError):
-            raise HTTPException(status_code=503, detail="Gateway unavailable")
-        if isinstance(error, httpx.TimeoutException):
-            raise HTTPException(status_code=504, detail="Supplier request timed out")
-        raise HTTPException(status_code=502, detail="Supplier gateway error")
-    except Exception:
-        db2 = SessionLocal()
-        try:
-            if not use_plan:
-                WALLET_SERVICE.settle(db2, api_key.user_id, request_id, estimated_cost, Decimal("0"))
-            db2.commit()
-        except Exception:
-            db2.rollback()
-        finally:
-            db2.close()
-        raise
+            db_fail.close()
+        RATE_LIMITER.decrement_concurrency(api_key.id)
+        raise HTTPException(status_code=resp.status_code, detail=error_detail)
+    if not isinstance(resp, httpx.Response):
+        RATE_LIMITER.decrement_concurrency(api_key.id)
+        raise HTTPException(status_code=502, detail="Supplier unreachable")
+    result = resp.json()
+    if current_supplier_route.protocol == "anthropic":
+        result = normalize_anthropic_response(req.model, result)
+    else:
+        result["model"] = req.model
+    db_success = SessionLocal()
+    try:
+        route_success = db_success.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if route_success:
+            route_success.key_status = "healthy"
+            route_success.last_error = None
+            db_success.commit()
+    finally:
+        db_success.close()
+    RATE_LIMITER.decrement_concurrency(api_key.id)
     usage = result.get("usage", {})
     input_tokens = usage.get("prompt_tokens", 0)
     output_tokens = usage.get("completion_tokens", 0)
