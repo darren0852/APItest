@@ -3,6 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, date, timedelta
@@ -917,6 +918,18 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         route_db.close()
     if "max_tokens" not in json.loads(json.dumps(upstream_body)):
         upstream_body["max_tokens"] = 4096
+    def finalize_stream_success():
+        db3 = SessionLocal()
+        try:
+            WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost_holder["value"])
+            route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+            if route_db3:
+                route_db3.key_status = "healthy"
+                route_db3.last_error = None
+            db3.commit()
+        finally:
+            db3.close()
+    actual_cost_holder = {"value": Decimal("0")}
     if req.stream:
         def anthropic_stream():
             text_parts = []
@@ -927,7 +940,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                     endpoint_url,
                     headers=upstream_headers,
                     json=upstream_body,
-                    timeout=90.0,
+                    timeout=httpx.Timeout(90.0, read=90.0, write=30.0, connect=15.0),
                 ) as resp:
                     if resp.status_code != 200:
                         detail = resp.read().decode("utf-8", "ignore")[:500]
@@ -1008,16 +1021,8 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         + cache_creation_tokens * price.get("cache_write", Decimal("0"))
                         + output_tokens * price["output"]
                     ) / Decimal("1000000")
-                    db3 = SessionLocal()
-                    try:
-                        WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
-                        route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-                        if route_db3:
-                            route_db3.key_status = "healthy"
-                            route_db3.last_error = None
-                        db3.commit()
-                    finally:
-                        db3.close()
+                    actual_cost_holder["value"] = actual_cost
+                    yield ": done\n\n".encode("utf-8")
             except Exception as exc:
                 if not text_parts:
                     payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":str(exc)}}, ensure_ascii=False)
@@ -1030,9 +1035,10 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "Connection": "close",
+                "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+            background=BackgroundTask(finalize_stream_success),
         )
     RATE_LIMITER.increment_concurrency(api_key.id)
     try:
