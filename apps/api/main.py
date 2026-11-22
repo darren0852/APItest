@@ -734,6 +734,98 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             upstream_body["system"] = system_text
     finally:
         route_db.close()
+    actual_cost_holder = {
+        "value": Decimal("0"),
+        "input_tokens": estimated_input,
+        "output_tokens": estimated_output,
+        "cached_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    if req.stream:
+        def openai_stream():
+            stream_usage = {}
+            try:
+                with httpx.stream(
+                    "POST",
+                    endpoint_url,
+                    headers=upstream_headers,
+                    json=upstream_body,
+                    timeout=httpx.Timeout(90.0, read=90.0, write=30.0, connect=15.0),
+                    trust_env=False,
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = resp.read().decode("utf-8", "ignore")[:500]
+                        yield f"data: {json.dumps({'error':{'message':detail}}, ensure_ascii=False)}\n\n".encode("utf-8")
+                        yield "data: [DONE]\n\n".encode("utf-8")
+                        return
+                    for raw_line in resp.iter_lines():
+                        line = raw_line.decode("utf-8", "ignore") if isinstance(raw_line, bytes) else raw_line
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except Exception:
+                            continue
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+                    resp.close()
+                    usage = stream_usage.get("prompt_tokens_details") or {}
+                    input_tokens = stream_usage.get("prompt_tokens") or estimated_input
+                    output_tokens = stream_usage.get("completion_tokens") or max(
+                        len(str(req.messages[0].get("content", "") if req.messages else "")) // 4, 1
+                    )
+                    cached_tokens = usage.get("cached_tokens", 0)
+                    cache_creation_tokens = usage.get("cache_creation_tokens", 0)
+                    uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
+                    actual_cost = (
+                        uncached_input * price["input"]
+                        + cached_tokens * price["cache_read"]
+                        + cache_creation_tokens * price["cache_write"]
+                        + output_tokens * price["output"]
+                    ) / Decimal("1000000")
+                    actual_cost_holder.update({
+                        "value": actual_cost,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cached_tokens": cached_tokens,
+                        "cache_creation_tokens": cache_creation_tokens,
+                    })
+                    yield "data: [DONE]\n\n".encode("utf-8")
+            except Exception as exc:
+                detail = str(exc)[:400]
+                yield f"data: {json.dumps({'error':{'message':detail}}, ensure_ascii=False)}\n\n".encode("utf-8")
+                yield "data: [DONE]\n\n".encode("utf-8")
+        db_finish = SessionLocal()
+        try:
+            if use_plan:
+                db_finish_ent = db_finish.query(Entitlement).filter(Entitlement.id == entitlement_id).first()
+                if db_finish_ent:
+                    PlanService.consume(db_finish, db_finish_ent, actual_cost_holder["input_tokens"] + actual_cost_holder["output_tokens"])
+            else:
+                WALLET_SERVICE.settle(db_finish, api_key.user_id, request_id, estimated_cost, actual_cost_holder["value"])
+            WALLET_SERVICE.record_usage(
+                db_finish,
+                api_key.user_id,
+                api_key.id,
+                req.model,
+                actual_cost_holder["input_tokens"],
+                actual_cost_holder["output_tokens"],
+                actual_cost_holder["value"],
+                cache_read_tokens=actual_cost_holder["cached_tokens"],
+                cache_write_tokens=actual_cost_holder["cache_creation_tokens"],
+            )
+            db_finish.commit()
+        finally:
+            db_finish.close()
+        return StreamingResponse(
+            openai_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"},
+        )
     try:
         resp = await asyncio.wait_for(
             asyncio.to_thread(
