@@ -734,7 +734,6 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             upstream_body["system"] = system_text
     finally:
         route_db.close()
-    RATE_LIMITER.increment_concurrency(api_key.id)
     try:
         resp = await asyncio.wait_for(
             asyncio.to_thread(
@@ -763,10 +762,8 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             db_fail.commit()
         finally:
             db_fail.close()
-        RATE_LIMITER.decrement_concurrency(api_key.id)
         raise HTTPException(status_code=resp.status_code, detail=error_detail)
     if not isinstance(resp, httpx.Response):
-        RATE_LIMITER.decrement_concurrency(api_key.id)
         raise HTTPException(status_code=502, detail="Supplier unreachable")
     result = resp.json()
     if current_supplier_route.protocol == "anthropic":
@@ -782,7 +779,6 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             db_success.commit()
     finally:
         db_success.close()
-    RATE_LIMITER.decrement_concurrency(api_key.id)
     usage = result.get("usage", {})
     input_tokens = usage.get("prompt_tokens", 0)
     output_tokens = usage.get("completion_tokens", 0)
@@ -1037,8 +1033,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                     payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":str(exc)}}, ensure_ascii=False)
                     yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
                 WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
-            finally:
-                RATE_LIMITER.decrement_concurrency(api_key.id)
         return StreamingResponse(
             anthropic_stream(),
             media_type="text/event-stream",
@@ -1076,7 +1070,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         finally:
             db_error.close()
         WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
-        RATE_LIMITER.decrement_concurrency(api_key.id)
         raise HTTPException(status_code=resp.status_code, detail=f"Supplier error: {resp.text}")
     result = resp.json()
     # Convert OpenAI-shaped response to Anthropic /v1/messages format for Claude Code compatibility
