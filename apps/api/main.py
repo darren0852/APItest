@@ -1049,7 +1049,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             },
             background=BackgroundTask(finalize_stream_success),
         )
-    RATE_LIMITER.increment_concurrency(api_key.id)
     print("MESSAGES_CONCURRENCY_SET", api_key.id, flush=True)
     try:
         try:
@@ -1128,7 +1127,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         db3.commit()
     finally:
         db3.close()
-    RATE_LIMITER.decrement_concurrency(api_key.id)
     result["model"] = req.model
     return result
 
