@@ -12,6 +12,7 @@ import asyncio
 import json
 import httpx, uuid, time
 import os
+from types import SimpleNamespace
 from sqlalchemy import text
 from database import get_db, init_db, SessionLocal, User, APIKey, Wallet, WalletLedger, UsageRecord
 from auth import hash_password, verify_password, create_jwt, decode_jwt
@@ -859,6 +860,14 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         if supplier_route is None:
             raise HTTPException(status_code=404, detail=f"No active supplier route for model: {req.model}")
         supplier_route_id = int(supplier_route.id)
+        current_supplier_route = SimpleNamespace(
+            model_name=supplier_route.model_name,
+            upstream_model=supplier_route.upstream_model,
+            endpoint_url=supplier_route.endpoint_url,
+            protocol=supplier_route.protocol,
+            api_key_encrypted=supplier_route.api_key_encrypted,
+            api_key_last4=supplier_route.api_key_last4,
+        )
         user = db.query(User).filter(User.id == api_key.user_id).first()
         if user is None or user.status not in ("active", "admin"):
             raise HTTPException(status_code=403, detail="Account suspended")
@@ -879,7 +888,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         raise HTTPException(status_code=500, detail=f"Billing error: {str(e)}")
     finally:
         db.close()
-    current_supplier_route = supplier_route
     if isinstance(req.system, list):
         system_text = "\n".join(
             str(block.get("text", "")) if isinstance(block, dict) and block.get("type") == "text" else str(block)
