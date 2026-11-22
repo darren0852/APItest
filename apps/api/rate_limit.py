@@ -9,7 +9,7 @@ class RateLimiter:
         self.r = None
         self._mem: dict[str, tuple[int, int]] = {}
         self._lock = threading.Lock()
-        if url:
+        if url and os.getenv("USE_REDIS_RATE_LIMIT", "0") == "1":
             try:
                 self.r = redis.Redis.from_url(
                     url,
