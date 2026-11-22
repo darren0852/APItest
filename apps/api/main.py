@@ -831,7 +831,9 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
 
 @app.post("/v1/messages")
 async def proxy_messages(request: Request, req: ChatCompletionRequest):
+    print("MESSAGES_START", req.model, req.stream, flush=True)
     api_key = await _resolve_api_key(request)
+    print("MESSAGES_AUTHED", api_key.id, flush=True)
     price_db = SessionLocal()
     try:
         price = get_model_price(price_db, req.model)
@@ -839,6 +841,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         price_db.close()
     if price is None:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
+    print("MESSAGES_PRICED", req.model, flush=True)
     if price.get("group") != api_key.group_name:
         raise HTTPException(status_code=403, detail="该模型不属于当前密钥分组")
     estimated_input = sum(len(str(m.get("content", ""))) for m in req.messages) // 4 + 1
@@ -914,6 +917,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         upstream_body["max_tokens"] = req.max_tokens or 4096
         if current_supplier_route.protocol == "anthropic" and system_text:
             upstream_body["system"] = system_text
+        print("MESSAGES_ROUTE_READY", supplier_route_id, current_supplier_route.endpoint_url, flush=True)
     finally:
         route_db.close()
     if "max_tokens" not in json.loads(json.dumps(upstream_body)):
@@ -935,6 +939,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             text_parts = []
             stream_usage = {}
             try:
+                print("MESSAGES_UPSTREAM_CALL", endpoint_url, upstream_body, flush=True)
                 with httpx.stream(
                     "POST",
                     endpoint_url,
@@ -1026,6 +1031,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                     actual_cost_holder["value"] = actual_cost
                     yield ": done\n\n".encode("utf-8")
             except Exception as exc:
+                print("MESSAGES_STREAM_ERROR", type(exc).__name__, str(exc), flush=True)
                 if not text_parts:
                     payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":str(exc)}}, ensure_ascii=False)
                     yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
@@ -1045,12 +1051,14 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     RATE_LIMITER.increment_concurrency(api_key.id)
     try:
         try:
+            print("MESSAGES_SYNC_CALL_START", time.time(), flush=True)
             resp = await asyncio.wait_for(
                 asyncio.to_thread(
                     lambda: httpx.post(endpoint_url, headers=upstream_headers, json=upstream_body, timeout=60.0)
                 ),
                 timeout=75.0,
             )
+            print("MESSAGES_SYNC_CALL_DONE", time.time(), resp.status_code, flush=True)
         except Exception:
             WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
             raise HTTPException(status_code=504, detail="Supplier timeout")
