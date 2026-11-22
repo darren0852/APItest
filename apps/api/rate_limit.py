@@ -11,7 +11,12 @@ class RateLimiter:
         self._lock = threading.Lock()
         if url:
             try:
-                self.r = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=3)
+                self.r = redis.Redis.from_url(
+                    url,
+                    decode_responses=True,
+                    socket_connect_timeout=2,
+                    socket_timeout=2,
+                )
                 self.r.ping()
             except Exception:
                 self.r = None
