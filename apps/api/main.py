@@ -969,7 +969,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         detail = resp.read().decode("utf-8", "ignore")[:500]
                         payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":detail}}, ensure_ascii=False)
                         yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
-                        WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
                         return
                     yield (
                         "event: message_start\ndata: " + json.dumps({
@@ -1058,7 +1057,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                 if not text_parts:
                     payload = json.dumps({"type":"error","error":{"type":"supplier_error","message":str(exc)}}, ensure_ascii=False)
                     yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
-                WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
         return StreamingResponse(
             anthropic_stream(),
             media_type="text/event-stream",
