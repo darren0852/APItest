@@ -922,8 +922,6 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     if current_supplier_route.protocol == "anthropic" and system_text:
         upstream_body["system"] = system_text
     print("MESSAGES_ROUTE_READY", supplier_route_id, current_supplier_route.endpoint_url, flush=True)
-    if "max_tokens" not in json.loads(json.dumps(upstream_body)):
-        upstream_body["max_tokens"] = 4096
     def finalize_stream_success():
         db3 = SessionLocal()
         try:
