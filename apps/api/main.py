@@ -850,6 +850,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     if not rl_ok:
         raise HTTPException(status_code=429, detail=f"Rate limit exceeded: {rate_limit} requests/minute")
     request_id = str(uuid.uuid4())
+    use_plan = False
     db = SessionLocal()
     try:
         supplier_route = get_supplier_route(db, req.model)
@@ -921,7 +922,20 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     def finalize_stream_success():
         db3 = SessionLocal()
         try:
-            WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            actual_cost = actual_cost_holder["value"]
+            if not use_plan:
+                WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+            WALLET_SERVICE.record_usage(
+                db3,
+                api_key.user_id,
+                api_key.id,
+                req.model,
+                actual_cost_holder["input_tokens"],
+                actual_cost_holder["output_tokens"],
+                actual_cost,
+                cache_read_tokens=actual_cost_holder["cached_tokens"],
+                cache_write_tokens=actual_cost_holder["cache_creation_tokens"],
+            )
             route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
             if route_db3:
                 route_db3.key_status = "healthy"
@@ -929,7 +943,13 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             db3.commit()
         finally:
             db3.close()
-    actual_cost_holder = {"value": Decimal("0")}
+    actual_cost_holder = {
+        "value": Decimal("0"),
+        "input_tokens": estimated_input,
+        "output_tokens": estimated_output,
+        "cached_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
     print("MESSAGES_PREPARED", req.stream, flush=True)
     if req.stream:
         def anthropic_stream():
@@ -1025,7 +1045,13 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         + cache_creation_tokens * price.get("cache_write", Decimal("0"))
                         + output_tokens * price["output"]
                     ) / Decimal("1000000")
-                    actual_cost_holder["value"] = actual_cost
+                    actual_cost_holder.update({
+                        "value": actual_cost,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cached_tokens": cached_tokens,
+                        "cache_creation_tokens": cache_creation_tokens,
+                    })
                     yield ": done\n\n".encode("utf-8")
             except Exception as exc:
                 print("MESSAGES_STREAM_ERROR", type(exc).__name__, str(exc), flush=True)
