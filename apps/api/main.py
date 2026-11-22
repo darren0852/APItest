@@ -934,6 +934,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         finally:
             db3.close()
     actual_cost_holder = {"value": Decimal("0")}
+    print("MESSAGES_PREPARED", req.stream, flush=True)
     if req.stream:
         def anthropic_stream():
             text_parts = []
@@ -1049,6 +1050,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             background=BackgroundTask(finalize_stream_success),
         )
     RATE_LIMITER.increment_concurrency(api_key.id)
+    print("MESSAGES_CONCURRENCY_SET", api_key.id, flush=True)
     try:
         try:
             print("MESSAGES_SYNC_CALL_START", time.time(), flush=True)
