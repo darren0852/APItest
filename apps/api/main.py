@@ -921,7 +921,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     def finalize_stream_success():
         db3 = SessionLocal()
         try:
-            WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost_holder["value"])
+            WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, Decimal("0"))
             route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
             if route_db3:
                 route_db3.key_status = "healthy"
@@ -941,6 +941,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                     headers=upstream_headers,
                     json=upstream_body,
                     timeout=httpx.Timeout(90.0, read=90.0, write=30.0, connect=15.0),
+                    trust_env=False,
                 ) as resp:
                     if resp.status_code != 200:
                         detail = resp.read().decode("utf-8", "ignore")[:500]
@@ -1010,6 +1011,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         }, ensure_ascii=False) + "\n\n"
                     ).encode("utf-8")
                     yield "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".encode("utf-8")
+                    resp.close()
                     input_tokens = stream_usage.get("prompt_tokens") or estimated_input
                     prompt_details = stream_usage.get("prompt_tokens_details") or {}
                     cached_tokens = prompt_details.get("cached_tokens") or 0
