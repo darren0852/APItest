@@ -879,47 +879,41 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         raise HTTPException(status_code=500, detail=f"Billing error: {str(e)}")
     finally:
         db.close()
-    route_db = SessionLocal()
-    try:
-        current_supplier_route = route_db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-        if current_supplier_route is None:
-            raise HTTPException(status_code=404, detail="Supplier route disappeared")
-        if isinstance(req.system, list):
-            system_text = "\n".join(
-                str(block.get("text", "")) if isinstance(block, dict) and block.get("type") == "text" else str(block)
-                for block in req.system
-            )
-        elif req.system is None:
-            system_text = ""
-        else:
-            system_text = str(req.system)
-        messages_for_supplier = []
-        if system_text:
-            messages_for_supplier.append({"role": "system", "content": system_text})
-        for item in req.messages:
-            role = item.get("role") if isinstance(item, dict) else "user"
-            content = item.get("content", "") if isinstance(item, dict) else ""
-            if isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "")
-                        if block_type == "text":
-                            text_parts.append(str(block.get("text", "")))
-                        elif block_type == "tool_result":
-                            nested = block.get("content", "")
-                            text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
-                        elif block_type == "tool_use":
-                            text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
-                content = "\n".join(text_parts)
-            messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
-        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
-        upstream_body["max_tokens"] = req.max_tokens or 4096
-        if current_supplier_route.protocol == "anthropic" and system_text:
-            upstream_body["system"] = system_text
-        print("MESSAGES_ROUTE_READY", supplier_route_id, current_supplier_route.endpoint_url, flush=True)
-    finally:
-        route_db.close()
+    current_supplier_route = supplier_route
+    if isinstance(req.system, list):
+        system_text = "\n".join(
+            str(block.get("text", "")) if isinstance(block, dict) and block.get("type") == "text" else str(block)
+            for block in req.system
+        )
+    elif req.system is None:
+        system_text = ""
+    else:
+        system_text = str(req.system)
+    messages_for_supplier = []
+    if system_text:
+        messages_for_supplier.append({"role": "system", "content": system_text})
+    for item in req.messages:
+        role = item.get("role") if isinstance(item, dict) else "user"
+        content = item.get("content", "") if isinstance(item, dict) else ""
+        if isinstance(content, list):
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    block_type = block.get("type", "")
+                    if block_type == "text":
+                        text_parts.append(str(block.get("text", "")))
+                    elif block_type == "tool_result":
+                        nested = block.get("content", "")
+                        text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
+                    elif block_type == "tool_use":
+                        text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
+            content = "\n".join(text_parts)
+        messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
+    endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
+    upstream_body["max_tokens"] = req.max_tokens or 4096
+    if current_supplier_route.protocol == "anthropic" and system_text:
+        upstream_body["system"] = system_text
+    print("MESSAGES_ROUTE_READY", supplier_route_id, current_supplier_route.endpoint_url, flush=True)
     if "max_tokens" not in json.loads(json.dumps(upstream_body)):
         upstream_body["max_tokens"] = 4096
     def finalize_stream_success():
