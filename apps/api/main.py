@@ -1401,9 +1401,17 @@ async def proxy_responses(req: ResponsesRequest, api_key: APIKey = Depends(valid
         if supplier_route is None:
             raise HTTPException(status_code=404, detail=f"No active supplier route for model: {req.model}")
         supplier_route_id = int(supplier_route.id)
-        current_route = db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
-        if current_route is None:
+        current_route_raw = db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if current_route_raw is None:
             raise HTTPException(status_code=404, detail="Supplier route disappeared")
+        current_route = SimpleNamespace(
+            model_name=current_route_raw.model_name,
+            upstream_model=current_route_raw.upstream_model,
+            endpoint_url=current_route_raw.endpoint_url,
+            protocol=current_route_raw.protocol,
+            api_key_encrypted=current_route_raw.api_key_encrypted,
+            api_key_last4=current_route_raw.api_key_last4,
+        )
         user = db.query(User).filter(User.id == api_key.user_id).first()
         if user is None or user.status not in ("active", "admin"):
             raise HTTPException(status_code=403, detail="Account suspended")
