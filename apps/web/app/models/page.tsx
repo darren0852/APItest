@@ -2,16 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
+import {
+  PublicModelCacheGroup,
+  PublicModelCacheItem,
+  readCachedPublicModels,
+  prefetchPublicModels,
+  startPublicModelsRefresh,
+} from "../../lib/public-models";
 
-interface PublicModel {
-  model: string;
-  input_sell: number;
-  output_sell: number;
-  cache_write_sell: number;
-  cache_read_sell: number;
-  official?: [number, number, number, number] | null;
-  peak_multiplier?: number;
-}
+type PublicModel = PublicModelCacheItem;
 
 const MODEL_FEATURES: Record<string, number[]> = {
   "glm-5.3": [1, 2],
@@ -59,10 +58,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-interface PublicGroup {
-  group_name: string;
-  models: PublicModel[];
-}
+type PublicGroup = PublicModelCacheGroup;
 
 const API = "https://api.vemixapp.com";
 
@@ -149,14 +145,31 @@ export default function ModelsPage() {
   const [detailModel, setDetailModel] = useState("");
 
   useEffect(() => {
-    fetch(`${API}/public/models`)
-      .then((response) => response.json())
-      .then((payload: PublicGroup[]) => {
-        setData(payload);
-        setSelectedGroup(payload[0]?.group_name || "");
-      })
-      .catch(() => setError("无法加载模型数据"))
-      .finally(() => setLoading(false));
+    let active = true;
+    const cached = readCachedPublicModels();
+    if (cached) {
+      setData(cached);
+      setSelectedGroup(cached[0]?.group_name || "");
+      setLoading(false);
+      startPublicModelsRefresh();
+    } else {
+      setLoading(true);
+      prefetchPublicModels()
+        .then((payload) => {
+          if (!active) return;
+          setData(payload);
+          setSelectedGroup(payload[0]?.group_name || "");
+        })
+        .catch(() => {
+          if (active) setError("无法加载模型数据");
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }
+    return () => {
+      active = false;
+    };
   }, []);
 
   const rows = useMemo(() => {

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { prefetchPublicModels } from "../../lib/public-models";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -10,6 +11,10 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    void prefetchPublicModels().catch(() => undefined);
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -29,6 +34,7 @@ export default function Login() {
       }
       localStorage.setItem("token", data.token);
       localStorage.setItem("email", data.email);
+      void prefetchPublicModels().catch(() => undefined);
       router.push(data.is_admin ? "/admin" : "/dashboard");
     } catch {
       setError("Cannot connect to server");

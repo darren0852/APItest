@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { prefetchPublicModels } from "../../lib/public-models";
 
 const userLinks = [
   { href: "/dashboard", label: "仪表盘", icon: "◈" },
@@ -39,6 +41,10 @@ export default function AppShell({
 }) {
   const router = useRouter();
   const links = mode === "admin" ? adminLinks : userLinks;
+
+  useEffect(() => {
+    void prefetchPublicModels().catch(() => undefined);
+  }, []);
 
   const logout = () => {
     localStorage.removeItem("token");

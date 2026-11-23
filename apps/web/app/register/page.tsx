@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { prefetchPublicModels } from "../../lib/public-models";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -29,6 +30,7 @@ export default function Register() {
       }
       localStorage.setItem("token", data.token);
       localStorage.setItem("email", data.email);
+      void prefetchPublicModels().catch(() => undefined);
       router.push(data.is_admin ? "/admin" : "/dashboard");
     } catch {
       setError("Cannot connect to server");
