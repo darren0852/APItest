@@ -5,10 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
 
-interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cost: number; }
+interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost: number; }
 interface ModelDistributionItem { model: string; requests: number; tokens: number; cost: number; }
 interface TrendItem { date: string; requests: number; input_tokens: number; output_tokens: number; cost: number; }
-interface RecentUsageItem { id: number; model: string; input_tokens: number; output_tokens: number; tokens: number; cost: number; created_at: string; }
+interface RecentUsageItem { id: number; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; tokens: number; cost: number; created_at: string; }
 interface DashboardData {
   range_days: number;
   currency: string;
@@ -137,8 +137,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-4" style={{ marginBottom: 20 }}>
-        {statCard("今日 Token", formatTokens(todayTokens), `输入 ${formatTokens(dashboard?.today.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.today.output_tokens ?? 0)}`)}
-        {statCard("累计 Token", formatTokens(totalTokens), `输入 ${formatTokens(dashboard?.total.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.total.output_tokens ?? 0)}`)}
+        {statCard("今日 Token", formatTokens(todayTokens), `输入 ${formatTokens(dashboard?.today.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.today.output_tokens ?? 0)} · 缓存 ${formatTokens((dashboard?.today.cache_read_tokens ?? 0) + (dashboard?.today.cache_write_tokens ?? 0))}`)}
+        {statCard("累计 Token", formatTokens(totalTokens), `输入 ${formatTokens(dashboard?.total.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.total.output_tokens ?? 0)} · 缓存 ${formatTokens((dashboard?.total.cache_read_tokens ?? 0) + (dashboard?.total.cache_write_tokens ?? 0))}`)}
         {statCard("范围请求", String(dashboard?.range.requests ?? 0), `${range} 天真实数据`)}
         {statCard("范围消费", `${currency} ${(dashboard?.range.cost ?? 0).toFixed(2)}`, `${range} 天统计`)}
       </div>
@@ -204,6 +204,9 @@ export default function DashboardPage() {
                 <div style={{ textAlign: "right" }}>
                   <div>{currency} {item.cost.toFixed(2)}</div>
                   <div className="stat-mini">{item.tokens.toLocaleString()} tokens</div>
+                  {((item.cache_read_tokens || 0) > 0 || (item.cache_write_tokens || 0) > 0) && (
+                    <div className="stat-mini">缓存读取 {formatTokens(item.cache_read_tokens || 0)} · 缓存写入 {formatTokens(item.cache_write_tokens || 0)}</div>
+                  )}
                 </div>
               </div>
             ))}

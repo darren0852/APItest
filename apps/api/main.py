@@ -14,7 +14,7 @@ import httpx, uuid, time
 import os
 from types import SimpleNamespace
 from sqlalchemy import text
-from database import get_db, init_db, SessionLocal, User, APIKey, Wallet, WalletLedger, UsageRecord
+from database import init_db, SessionLocal, User, APIKey, Wallet, WalletLedger, UsageRecord
 from auth import hash_password, verify_password, create_jwt, decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE, get_model_price
@@ -66,6 +66,21 @@ class ChatCompletionRequest(BaseModel):
     system: Optional[object] = None
     stream: Optional[bool] = False
     max_tokens: Optional[int] = None
+    tools: Optional[list] = None
+    tool_choice: Optional[object] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+
+class ResponsesRequest(BaseModel):
+    model: str
+    input: object
+    stream: Optional[bool] = False
+    instructions: Optional[str] = None
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    tools: Optional[list] = None
+    tool_choice: Optional[object] = None
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if credentials is None:
@@ -405,18 +420,24 @@ async def list_api_keys(user: User = Depends(get_current_user)):
                     "requests": len(today_usage),
                     "input_tokens": sum(item.input_tokens for item in today_usage),
                     "output_tokens": sum(item.output_tokens for item in today_usage),
+                    "cache_read_tokens": sum(item.cache_read_tokens or 0 for item in today_usage),
+                    "cache_write_tokens": sum(item.cache_write_tokens or 0 for item in today_usage),
                     "cost": float(sum(item.cost for item in today_usage)),
                 },
                 "month": {
                     "requests": len(month_usage),
                     "input_tokens": sum(item.input_tokens for item in month_usage),
                     "output_tokens": sum(item.output_tokens for item in month_usage),
+                    "cache_read_tokens": sum(item.cache_read_tokens or 0 for item in month_usage),
+                    "cache_write_tokens": sum(item.cache_write_tokens or 0 for item in month_usage),
                     "cost": float(sum(item.cost for item in month_usage)),
                 },
                 "total": {
                     "requests": len(total_usage),
                     "input_tokens": sum(item.input_tokens for item in total_usage),
                     "output_tokens": sum(item.output_tokens for item in total_usage),
+                    "cache_read_tokens": sum(item.cache_read_tokens or 0 for item in total_usage),
+                    "cache_write_tokens": sum(item.cache_write_tokens or 0 for item in total_usage),
                     "cost": float(sum(item.cost for item in total_usage)),
                 },
                 "quota_limit": float(k.quota_limit) if k.quota_limit is not None else None,
@@ -523,7 +544,10 @@ async def get_usage(user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         records = db.query(UsageRecord).filter(UsageRecord.user_id == user.id).order_by(UsageRecord.created_at.desc()).limit(50).all()
-        return [{"id": r.id, "model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens, "cost": float(r.cost), "created_at": r.created_at.isoformat()} for r in records]
+        return [
+            {"id": r.id, "model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens, "cache_read_tokens": r.cache_read_tokens or 0, "cache_write_tokens": r.cache_write_tokens or 0, "cost": float(r.cost), "created_at": r.created_at.isoformat()}
+            for r in records
+        ]
     finally:
         db.close()
 
@@ -540,6 +564,8 @@ async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
             "requests": len(records),
             "input_tokens": sum(r.input_tokens for r in records),
             "output_tokens": sum(r.output_tokens for r in records),
+            "cache_read_tokens": sum(r.cache_read_tokens or 0 for r in records),
+            "cache_write_tokens": sum(r.cache_write_tokens or 0 for r in records),
             "cost": float(sum(r.cost for r in records)),
         }
 
@@ -580,6 +606,8 @@ async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
                 "requests": len(records),
                 "input_tokens": sum(record.input_tokens for record in records),
                 "output_tokens": sum(record.output_tokens for record in records),
+                "cache_read_tokens": sum(record.cache_read_tokens or 0 for record in records),
+                "cache_write_tokens": sum(record.cache_write_tokens or 0 for record in records),
                 "cost": float(sum(record.cost for record in records)),
             })
 
@@ -599,6 +627,8 @@ async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
                 "model": record.model,
                 "input_tokens": record.input_tokens,
                 "output_tokens": record.output_tokens,
+                "cache_read_tokens": record.cache_read_tokens or 0,
+                "cache_write_tokens": record.cache_write_tokens or 0,
                 "tokens": record.input_tokens + record.output_tokens,
                 "cost": float(record.cost),
                 "created_at": record.created_at.isoformat(),
@@ -728,7 +758,12 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
                             text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
                 content = "\n".join(text_parts)
             messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
-        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
+        extra_params = {}
+        for key in ("tools", "tool_choice", "temperature", "top_p"):
+            value = getattr(req, key, None)
+            if value is not None:
+                extra_params[key] = value
+        endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True, extra_params)
         upstream_body["max_tokens"] = req.max_tokens or 4096
         if current_supplier_route.protocol == "anthropic" and system_text:
             upstream_body["system"] = system_text
@@ -1003,7 +1038,16 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
             content = "\n".join(text_parts)
         messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
-    endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True)
+    extra_params = {}
+    for key in ("temperature", "top_p"):
+        value = getattr(req, key, None)
+        if value is not None:
+            extra_params[key] = value
+    if req.tools:
+        extra_params["tools"] = req.tools
+    if req.tool_choice:
+        extra_params["tool_choice"] = req.tool_choice
+    endpoint_url, upstream_headers, upstream_body = upstream_request(current_supplier_route, messages_for_supplier, req.stream == True, extra_params)
     upstream_body["max_tokens"] = req.max_tokens or 4096
     if current_supplier_route.protocol == "anthropic" and system_text:
         upstream_body["system"] = system_text
@@ -1222,12 +1266,386 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     ) / Decimal("1000000")
     db3 = SessionLocal()
     try:
-        WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+        if use_plan:
+            db3_ent = db3.query(Entitlement).filter(Entitlement.id == entitlement_id).first()
+            if db3_ent:
+                PlanService.consume(db3, db3_ent, total_tokens)
+        else:
+            WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+        WALLET_SERVICE.record_usage(
+            db3,
+            api_key.user_id,
+            api_key.id,
+            req.model,
+            input_tokens,
+            output_tokens,
+            actual_cost,
+            cache_read_tokens=cached_tokens,
+            cache_write_tokens=cache_creation_tokens,
+        )
         db3.commit()
+    except Exception:
+        db3.rollback()
     finally:
         db3.close()
     result["model"] = req.model
     return result
+
+
+def _responses_to_messages(data: ResponsesRequest) -> list:
+    messages = []
+    if data.instructions:
+        messages.append({"role": "system", "content": data.instructions})
+    if isinstance(data.input, str):
+        messages.append({"role": "user", "content": data.input})
+        return messages
+    for item in data.input or []:
+        if not isinstance(item, dict):
+            messages.append({"role": "user", "content": str(item)})
+            continue
+        item_type = item.get("type")
+        if item_type == "function_call":
+            messages.append({"role": "assistant", "tool_calls": [{
+                "id": item.get("call_id") or item.get("id") or f"call_{uuid.uuid4().hex[:16]}",
+                "type": "function",
+                "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "{}")},
+            }]})
+        elif item_type == "function_call_output":
+            messages.append({"role": "tool", "tool_call_id": item.get("call_id") or item.get("id") or "", "content": item.get("output", "")})
+        elif item_type == "message":
+            role = item.get("role", "user")
+            if role == "developer":
+                role = "system"
+            content = item.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
+                        text_parts.append(str(block.get("text", "")))
+                    elif isinstance(block, str):
+                        text_parts.append(block)
+                content = "\n".join(text_parts)
+            messages.append({"role": role, "content": content})
+        elif "role" in item:
+            messages.append({"role": item["role"], "content": item.get("content", "")})
+    return messages
+
+
+def _openai_result_to_responses(result: dict, model: str) -> dict:
+    choice = (result.get("choices") or [{}])[0]
+    message = choice.get("message", {})
+    content = message.get("content", "")
+    output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+    output_items = [{
+        "type": "message",
+        "id": f"msg_{uuid.uuid4().hex[:24]}",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": output_text, "annotations": []}],
+    }]
+    for tool_call in message.get("tool_calls") or []:
+        func = tool_call.get("function", {})
+        output_items.append({
+            "type": "function_call",
+            "id": f"fc_{uuid.uuid4().hex[:16]}",
+            "call_id": tool_call.get("id") or f"call_{uuid.uuid4().hex[:16]}",
+            "name": func.get("name", ""),
+            "arguments": func.get("arguments", "{}"),
+        })
+    usage = result.get("usage", {})
+    details = usage.get("prompt_tokens_details") or {}
+    cached_tokens = details.get("cached_tokens", 0) or 0
+    cache_creation_tokens = details.get("cache_creation_input_tokens", 0) or 0
+    return {
+        "id": result.get("id") or f"resp_{uuid.uuid4().hex[:24]}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": model,
+        "status": "completed",
+        "output": output_items,
+        "usage": {
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+            "input_tokens_details": {"cached_tokens": cached_tokens},
+            "cache_creation_input_tokens": cache_creation_tokens,
+        },
+    }
+
+
+@app.post("/v1/responses")
+async def proxy_responses(req: ResponsesRequest, api_key: APIKey = Depends(validate_api_key)):
+    price_db = SessionLocal()
+    try:
+        price = get_model_price(price_db, req.model)
+    finally:
+        price_db.close()
+    if price is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
+    if price.get("group") != api_key.group_name:
+        raise HTTPException(status_code=403, detail="该模型不属于当前密钥分组")
+    messages = _responses_to_messages(req)
+    estimated_input = sum(len(str(m.get("content", ""))) for m in messages) // 4 + 1
+    estimated_output = 256
+    estimated_cost = (estimated_input * price["input"] + estimated_output * price["output"]) / Decimal("1000000")
+    estimated_cost = max(estimated_cost, Decimal("0.01"))
+    rate_limit = api_key.rate_limit or 60
+    rl_ok, _ = RATE_LIMITER.check(f"rl:{api_key.id}", rate_limit, 60)
+    if not rl_ok:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded: {rate_limit} requests/minute")
+    request_id = str(uuid.uuid4())
+    use_plan = False
+    db = SessionLocal()
+    try:
+        supplier_route = get_supplier_route(db, req.model)
+        if supplier_route is None:
+            raise HTTPException(status_code=404, detail=f"No active supplier route for model: {req.model}")
+        supplier_route_id = int(supplier_route.id)
+        current_route = db.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+        if current_route is None:
+            raise HTTPException(status_code=404, detail="Supplier route disappeared")
+        user = db.query(User).filter(User.id == api_key.user_id).first()
+        if user is None or user.status not in ("active", "admin"):
+            raise HTTPException(status_code=403, detail="Account suspended")
+        ent_result = PlanService.check_entitlement(db, user.id, req.model)
+        if ent_result[0] == "plan":
+            use_plan = True
+            entitlement_id = int(ent_result[1].id)
+        elif ent_result[0] == "reject":
+            raise HTTPException(status_code=402, detail=ent_result[1])
+        else:
+            if not WALLET_SERVICE.check_balance(db, user.id, estimated_cost):
+                raise HTTPException(status_code=402, detail="Insufficient balance. Please top up.")
+            WALLET_SERVICE.reserve(db, user.id, estimated_cost)
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Billing error: {str(exc)}")
+    finally:
+        db.close()
+    extra_params = {
+        "temperature": req.temperature,
+        "top_p": req.top_p,
+        "tools": req.tools,
+        "tool_choice": req.tool_choice,
+    }
+    extra_params = {k: v for k, v in extra_params.items() if v is not None}
+    extra_params["max_tokens"] = req.max_output_tokens
+    upstream_stream = req.stream == True
+    endpoint_url, upstream_headers, upstream_body = upstream_request(
+        current_route, messages, upstream_stream, extra_params
+    )
+    if current_route.protocol == "anthropic":
+        upstream_stream = False
+        upstream_body["stream"] = False
+
+    if not upstream_stream:
+        try:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: httpx.post(endpoint_url, headers=upstream_headers, json=upstream_body, timeout=75.0, trust_env=False)
+                ),
+                timeout=80.0,
+            )
+        except Exception:
+            WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            raise HTTPException(status_code=504, detail="Supplier timeout")
+        if not isinstance(resp, httpx.Response) or resp.status_code != 200:
+            error_detail = resp.text[:500] if isinstance(resp, httpx.Response) else "Supplier unreachable"
+            WALLET_SERVICE.settle(SessionLocal(), api_key.user_id, request_id, estimated_cost, Decimal("0"))
+            raise HTTPException(status_code=resp.status_code if isinstance(resp, httpx.Response) else 502, detail=error_detail)
+        result = resp.json()
+        if current_route.protocol == "anthropic":
+            result = normalize_anthropic_response(req.model, result)
+        else:
+            result["model"] = req.model
+        usage = result.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        details = (usage.get("prompt_tokens_details") or {})
+        cached_tokens = details.get("cached_tokens", 0) or 0
+        cache_creation_tokens = (
+            usage.get("cache_creation_input_tokens", 0)
+            or details.get("cache_creation_input_tokens", 0)
+            or 0
+        )
+        uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
+        actual_cost = (
+            uncached_input * price["input"]
+            + cached_tokens * price.get("cache_read", Decimal("0"))
+            + cache_creation_tokens * price.get("cache_write", Decimal("0"))
+            + output_tokens * price["output"]
+        ) / Decimal("1000000")
+        db3 = SessionLocal()
+        try:
+            if use_plan:
+                db3_ent = db3.query(Entitlement).filter(Entitlement.id == entitlement_id).first()
+                if db3_ent:
+                    PlanService.consume(db3, db3_ent, input_tokens + output_tokens)
+            else:
+                WALLET_SERVICE.settle(db3, api_key.user_id, request_id, estimated_cost, actual_cost)
+            WALLET_SERVICE.record_usage(
+                db3,
+                api_key.user_id,
+                api_key.id,
+                req.model,
+                input_tokens,
+                output_tokens,
+                actual_cost,
+                cache_read_tokens=cached_tokens,
+                cache_write_tokens=cache_creation_tokens,
+            )
+            route_db3 = db3.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+            if route_db3:
+                route_db3.key_status = "healthy"
+                route_db3.last_error = None
+            db3.commit()
+        except Exception:
+            db3.rollback()
+        finally:
+            db3.close()
+        return _openai_result_to_responses(result, req.model)
+
+    def responses_stream():
+        response_id = f"resp_{uuid.uuid4().hex[:24]}"
+        item_id = f"msg_{uuid.uuid4().hex[:24]}"
+        try:
+            with httpx.stream(
+                "POST",
+                endpoint_url,
+                headers=upstream_headers,
+                json=upstream_body,
+                timeout=httpx.Timeout(90.0, read=90.0, write=30.0, connect=15.0),
+                trust_env=False,
+            ) as upstream_resp:
+                if upstream_resp.status_code != 200:
+                    detail = upstream_resp.read().decode("utf-8", "ignore")[:500]
+                    err = json.dumps({"error": {"message": detail}}, ensure_ascii=False)
+                    yield f"data: {err}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                created = {
+                    "type": "response.created",
+                    "response": {"id": response_id, "object": "response", "created_at": int(time.time()), "model": req.model, "status": "in_progress", "output": [], "usage": None},
+                }
+                yield f"data: {json.dumps(created, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'role': 'assistant', 'status': 'in_progress', 'content': []}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': '', 'annotations': []}}, ensure_ascii=False)}\n\n"
+                text_parts = []
+                stream_usage = {}
+                for raw_line in upstream_resp.iter_lines():
+                    line = raw_line.decode("utf-8", "ignore") if isinstance(raw_line, bytes) else raw_line
+                    if not line.startswith("data:"):
+                        continue
+                    chunk_str = line[5:].strip()
+                    if chunk_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(chunk_str)
+                    except Exception:
+                        continue
+                    if chunk.get("usage"):
+                        stream_usage = chunk["usage"]
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content") or ""
+                        if not content:
+                            continue
+                        text_parts.append(content)
+                        delta_event = {
+                            "type": "response.output_text.delta",
+                            "item_id": item_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "delta": content,
+                        }
+                        yield f"data: {json.dumps(delta_event, ensure_ascii=False)}\n\n"
+            final_text = "".join(text_parts)
+            input_tokens = stream_usage.get("prompt_tokens") or estimated_input
+            output_tokens = stream_usage.get("completion_tokens") or max(len(final_text) // 4, 1)
+            prompt_details = stream_usage.get("prompt_tokens_details") or {}
+            cached_tokens = prompt_details.get("cached_tokens", 0) or 0
+            cache_creation_tokens = prompt_details.get("cache_creation_input_tokens", 0) or 0
+            uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
+            actual_cost = (
+                uncached_input * price["input"]
+                + cached_tokens * price.get("cache_read", Decimal("0"))
+                + cache_creation_tokens * price.get("cache_write", Decimal("0"))
+                + output_tokens * price["output"]
+            ) / Decimal("1000000")
+            db_finish = SessionLocal()
+            try:
+                if use_plan:
+                    db_finish_ent = db_finish.query(Entitlement).filter(Entitlement.id == entitlement_id).first()
+                    if db_finish_ent:
+                        PlanService.consume(db_finish, db_finish_ent, input_tokens + output_tokens)
+                else:
+                    WALLET_SERVICE.settle(db_finish, api_key.user_id, request_id, estimated_cost, actual_cost)
+                WALLET_SERVICE.record_usage(
+                    db_finish,
+                    api_key.user_id,
+                    api_key.id,
+                    req.model,
+                    input_tokens,
+                    output_tokens,
+                    actual_cost,
+                    cache_read_tokens=cached_tokens,
+                    cache_write_tokens=cache_creation_tokens,
+                )
+                route_db_finish = db_finish.query(SupplierRoute).filter(SupplierRoute.id == supplier_route_id).first()
+                if route_db_finish:
+                    route_db_finish.key_status = "healthy"
+                    route_db_finish.last_error = None
+                db_finish.commit()
+            except Exception:
+                db_finish.rollback()
+            finally:
+                db_finish.close()
+            done_item = {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "type": "message",
+                    "id": item_id,
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": final_text, "annotations": []}],
+                },
+            }
+            yield f"data: {json.dumps(done_item, ensure_ascii=False)}\n\n"
+            completed = {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": int(time.time()),
+                    "model": req.model,
+                    "status": "completed",
+                    "output": [done_item["item"]],
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": input_tokens + output_tokens,
+                        "input_tokens_details": {"cached_tokens": cached_tokens},
+                    },
+                },
+            }
+            yield f"data: {json.dumps(completed, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            detail_msg = str(exc)[:400]
+            err = json.dumps({"error": {"message": detail_msg}}, ensure_ascii=False)
+            yield f"data: {err}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        responses_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
 
 async def _resolve_api_key(request: Request) -> APIKey:
     auth = request.headers.get("authorization") or ""

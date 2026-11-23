@@ -9,3 +9,7 @@ fastapi_run.log
 litellm_output.log
 chrome-profile/
 *.png
+.patch.tmp
+.test_rsp.py
+.test_supplier.py
+.tmp_supplier_doc.docx

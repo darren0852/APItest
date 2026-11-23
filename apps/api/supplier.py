@@ -29,48 +29,70 @@ def get_supplier_route(db: Session, model_name: str) -> SupplierRoute | None:
     )
 
 
-def build_openai_payload(platform_model: str, route: SupplierRoute, messages: list, stream: bool) -> dict:
-    return {"model": route.upstream_model, "messages": messages, "stream": stream}
+OPENAI_EXTRA_KEYS = ("tools", "tool_choice", "temperature", "top_p", "frequency_penalty", "presence_penalty")
 
 
-def build_anthropic_payload(platform_model: str, route: SupplierRoute, messages: list, stream: bool) -> dict:
+def build_openai_payload(platform_model: str, route: SupplierRoute, messages: list, stream: bool, extra_body: dict = None) -> dict:
+    payload = {"model": route.upstream_model, "messages": messages, "stream": stream}
+    if extra_body:
+        for key in OPENAI_EXTRA_KEYS:
+            value = extra_body.get(key)
+            if value is not None:
+                payload[key] = value
+    return payload
+
+
+def build_anthropic_payload(platform_model: str, route: SupplierRoute, messages: list, stream: bool, extra_body: dict = None) -> dict:
     system_parts = []
     chat_messages = []
     for message in messages:
         role = message.get("role")
         content = message.get("content", "")
         if role == "system":
-            system_parts.append(str(content))
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        system_parts.append(str(block.get("text", "")))
+                    else:
+                        system_parts.append(str(block))
+            else:
+                system_parts.append(str(content))
         else:
             chat_messages.append({"role": "assistant" if role == "assistant" else "user", "content": content})
     payload = {
         "model": route.upstream_model,
         "messages": chat_messages,
-        "max_tokens": 4096,
+        "max_tokens": (extra_body.get("max_tokens") or 4096) if extra_body else 4096,
         "stream": stream,
     }
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
+    if extra_body:
+        for key in ("tools", "tool_choice", "temperature", "top_p"):
+            value = extra_body.get(key)
+            if value is not None:
+                payload[key] = value
     return payload
 
 
-def upstream_request(route: SupplierRoute, messages: list, stream: bool = False) -> tuple[dict, dict, dict]:
+def upstream_request(route: SupplierRoute, messages: list, stream: bool = False, extra_body: dict = None) -> tuple[dict, dict, dict]:
     api_key = decrypt_secret(route.api_key_encrypted)
     if route.protocol == "anthropic":
         headers = {
             "x-api-key": api_key,
+            "Authorization": f"Bearer {api_key}",
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        payload = build_anthropic_payload(route.model_name, route, messages, stream)
+        payload = build_anthropic_payload(route.model_name, route, messages, stream, extra_body)
     else:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        payload = build_openai_payload(route.model_name, route, messages, stream)
+        payload = build_openai_payload(route.model_name, route, messages, stream, extra_body)
     return route.endpoint_url, headers, payload
 
 

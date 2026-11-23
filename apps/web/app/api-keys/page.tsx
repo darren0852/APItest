@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
 
-interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cost: number; }
+interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost: number; }
 interface ApiKey {
   raw_key?: string | null;
   id: number;
@@ -250,7 +250,12 @@ export default function ApiKeysPage() {
                     </td>
                     <td><span className="badge badge-info">{key.current_concurrency}</span><span className="stat-mini">上限 {key.rate_limit || 60}/分钟</span></td>
                     <td>
-                      <div className="stat-mini">今日 RM {key.today.cost.toFixed(2)}<br />近30天 RM {key.month.cost.toFixed(2)}</div>
+                      <div className="stat-mini">
+                        今日 RM {key.today.cost.toFixed(2)}<br />近30天 RM {key.month.cost.toFixed(2)}
+                        {((key.month.cache_read_tokens || 0) > 0 || (key.month.cache_write_tokens || 0) > 0) && (
+                          <><br />缓存读取 {(key.month.cache_read_tokens || 0).toLocaleString()} / 写入 {(key.month.cache_write_tokens || 0).toLocaleString()}</>
+                        )}
+                      </div>
                     </td>
                     <td>{key.expires_at ? new Date(key.expires_at).toLocaleString() : "永久有效"}</td>
                     <td><span className={`badge ${key.status === "active" ? "badge-active" : key.status === "paused" ? "badge-warning" : "badge-danger"}`}>{key.status === "active" ? "活跃" : key.status === "paused" ? "暂停" : "已撤销"}</span></td>
