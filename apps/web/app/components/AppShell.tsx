@@ -11,7 +11,7 @@ const userLinks = [
   { href: "/models", label: "模型广场", icon: "◇" },
   { href: "/usage", label: "用量记录", icon: "◎" },
   { href: "/topup", label: "充值", icon: "＋" },
-  { href: "/docs", label: "接口文档", icon: "⌘" },
+  { href: "/docs", label: "接口文档", icon: "❯" },
 ];
 
 const adminLinks = [
@@ -67,8 +67,9 @@ export default function AppShell({
           <nav>
             {links.map((link) => (
               <Link key={link.href} href={link.href} className={`side-link${active === link.href ? " active" : ""}`}>
-                <span aria-hidden>{link.icon}</span>
-                {link.label}
+                <span aria-hidden style={{ width: 18, textAlign: "center", fontSize: 14, opacity: active === link.href ? 1 : .65 }}>{link.icon}</span>
+                <span style={{ flex: 1 }}>{link.label}</span>
+                {active === link.href && <span aria-hidden style={{ fontSize: 10, opacity: .6 }}>→</span>}
               </Link>
             ))}
           </nav>
