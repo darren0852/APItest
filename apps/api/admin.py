@@ -150,7 +150,7 @@ def _supplier_cost_cny(db):
         if price is None:
             continue
         total += (
-            (input_tokens or 0) * price.input_cost_per_token
+            max((input_tokens or 0) - (cache_read or 0) - (cache_write or 0), 0) * price.input_cost_per_token
             + (output_tokens or 0) * price.output_cost_per_token
             + (cache_write or 0) * price.cache_write_cost_per_token
             + (cache_read or 0) * price.cache_read_cost_per_token
@@ -750,7 +750,7 @@ async def get_analytics_series(range: str = "today", admin: User = Depends(requi
             price = price_map.get(record.model)
             if price:
                 cost = (
-                    Decimal(str(input_tokens)) * price.input_cost_per_token
+                    Decimal(str(max(input_tokens - cache_read_tokens - cache_write_tokens, 0))) * price.input_cost_per_token
                     + Decimal(str(output_tokens)) * price.output_cost_per_token
                     + Decimal(str(cache_write_tokens)) * price.cache_write_cost_per_token
                     + Decimal(str(cache_read_tokens)) * price.cache_read_cost_per_token
@@ -835,7 +835,7 @@ async def get_analytics_overview(admin: User = Depends(require_admin)):
             price = price_map.get(item.model)
             if price:
                 supplier_cost_cny += (
-                    Decimal(str(item.input_tokens or 0)) * price.input_cost_per_token
+                    Decimal(str(max((item.input_tokens or 0) - (item.cache_read_tokens or 0) - (item.cache_write_tokens or 0), 0))) * price.input_cost_per_token
                     + Decimal(str(item.output_tokens or 0)) * price.output_cost_per_token
                     + Decimal(str(item.cache_write_tokens or 0)) * price.cache_write_cost_per_token
                     + Decimal(str(item.cache_read_tokens or 0)) * price.cache_read_cost_per_token
