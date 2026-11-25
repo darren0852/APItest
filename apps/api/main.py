@@ -19,7 +19,7 @@ from auth import hash_password, verify_password, create_jwt, decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE, get_model_price
 from plans import Plan, Entitlement, PlanService
-from pricing import CustomerPrice, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, parse_hourly_multipliers
+from pricing import CustomerPrice, DailyMultiplier, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, parse_hourly_multipliers
 from admin import router as admin_router
 from rate_limit import RATE_LIMITER
 from supplier import get_supplier_route, upstream_request, normalize_anthropic_response
@@ -294,14 +294,23 @@ async def public_models():
 async def model_multiplier_history(model: str):
     db = SessionLocal()
     try:
-        row = db.query(ModelMultiplier).filter(ModelMultiplier.model == model).first()
-        series = parse_hourly_multipliers(row.hourly_multipliers if row else None)
-        hours = [f"{hour:02d}:00" for hour in range(24)]
+        sgt = timezone(timedelta(hours=8))
+        now = datetime.now(sgt)
+        points = []
+        for offset in range(23, -1, -1):
+            bucket = now - timedelta(hours=offset)
+            date_value = bucket.date().isoformat()
+            row = db.query(DailyMultiplier).filter(DailyMultiplier.model == model, DailyMultiplier.business_date == date_value).first()
+            curve = parse_hourly_multipliers(row.hourly_multipliers if row else None)
+            timestamp = f"{date_value} {bucket.hour:02d}:00"
+            points.append({"timestamp": timestamp, "multiplier": curve[bucket.hour]})
+        series = [point["multiplier"] for point in points]
+        hours = [point["timestamp"] for point in points]
         return {
             "model": model,
-            "ranges": [{"label": "1D", "series": series}],
+            "ranges": [{"label": "过去24小时", "series": series}],
             "hours": hours,
-            "current_multiplier": series[datetime.now(timezone(timedelta(hours=8))).hour],
+            "current_multiplier": series[-1],
         }
     finally:
         db.close()

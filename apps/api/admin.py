@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from database import SessionLocal, User, APIKey, Wallet, WalletLedger, UsageRecord
 from plans import Entitlement
-from pricing import ProviderPrice, CustomerPrice, ModelGroup, ModelMultiplier, Provider, Supplier, SupplierRoute, AuditLog, parse_hourly_multipliers
+from pricing import ProviderPrice, CustomerPrice, DailyMultiplier, ModelGroup, ModelMultiplier, Provider, Supplier, SupplierRoute, AuditLog, parse_hourly_multipliers
 from auth import decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE
@@ -42,6 +42,11 @@ class PriceUpdate(BaseModel):
 
 class HourlyMultipliersUpdate(BaseModel):
     model: str
+    hourly_multipliers: list[float]
+
+class DailyMultipliersUpdate(BaseModel):
+    model: str
+    business_date: str
     hourly_multipliers: list[float]
 
 class PricingGroupCreate(BaseModel):
@@ -293,6 +298,34 @@ async def list_model_multipliers(admin: User = Depends(require_admin)):
         rows = db.query(ModelMultiplier).all()
         rows_map = {row.model: parse_hourly_multipliers(row.hourly_multipliers) for row in rows}
         return [{"model": model.model, "hourly_multipliers": rows_map.get(model.model, parse_hourly_multipliers(None))} for model in models]
+    finally:
+        db.close()
+
+@router.get("/model-multiplier-day")
+async def get_model_multiplier_day(model: str, business_date: str, admin: User = Depends(require_admin)):
+    db = SessionLocal()
+    try:
+        row = db.query(DailyMultiplier).filter(DailyMultiplier.model == model, DailyMultiplier.business_date == business_date).first()
+        return {"model": model, "business_date": business_date, "hourly_multipliers": parse_hourly_multipliers(row.hourly_multipliers if row else None)}
+    finally:
+        db.close()
+
+@router.post("/model-multiplier-day")
+async def update_model_multiplier_day(req: DailyMultipliersUpdate, admin: User = Depends(require_admin)):
+    if len(req.hourly_multipliers) != 24:
+        raise HTTPException(status_code=400, detail="一天的曲线必须包含 24 个小时倍数")
+    if any(value <= 0 or value > 10 for value in req.hourly_multipliers):
+        raise HTTPException(status_code=400, detail="小时的倍数必须在 0.01 到 10 之间")
+    db = SessionLocal()
+    try:
+        row = db.query(DailyMultiplier).filter(DailyMultiplier.model == req.model, DailyMultiplier.business_date == req.business_date).first()
+        if row is None:
+            row = DailyMultiplier(model=req.model, business_date=req.business_date, hourly_multipliers="")
+            db.add(row)
+        row.hourly_multipliers = json.dumps([round(float(value), 4) for value in req.hourly_multipliers])
+        audit_log(db, admin.id, "update_daily_multiplier", "model", req.model, f"{req.business_date} curve updated")
+        db.commit()
+        return {"message": f"{req.model} {req.business_date} 峰谷倍数已更新", "hourly_multipliers": parse_hourly_multipliers(row.hourly_multipliers)}
     finally:
         db.close()
 

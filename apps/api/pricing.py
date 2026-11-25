@@ -54,6 +54,15 @@ class ModelMultiplier(Base):
     version = Column(Integer, default=1)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+class DailyMultiplier(Base):
+    """One billing multiplier curve per model + Malaysia/Singapore date."""
+    __tablename__ = "daily_multipliers"
+    id = Column(Integer, primary_key=True, index=True)
+    model = Column(String, nullable=False, index=True)
+    business_date = Column(String(10), nullable=False, index=True)
+    hourly_multipliers = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
 DEFAULT_HOURLY_MULTIPLIERS = [
     1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
     1.05, 1.10, 1.15, 1.18, 1.20, 1.22,

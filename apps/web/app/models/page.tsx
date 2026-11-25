@@ -123,6 +123,20 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
         {series.length > 0 ? (
           <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="multiplier-chart">
             <polyline points={coords} fill="none" stroke="var(--accent-2)" strokeWidth="2" />
+            {[0, .25, .5, .75, 1].map((ratio) => {
+              const y = height - ((height - 20) * ratio) - 20;
+              return (
+                <g key={ratio}>
+                  <line x1={40} x2={width} y1={y} y2={y} stroke="rgba(0,0,0,0.08)" strokeDasharray="3 5" />
+                  <text x={4} y={y + 3} fill="#6b7367" fontSize={10}>倍数 {(lo + (hi - lo) * ratio).toFixed(2)}</text>
+                </g>
+              );
+            })}
+            {series.map((value, index) => index % 6 === 0 ? (
+              <text key={index} x={(index / (series.length - 1)) * width} y={height - 5} fill="#6b7367" fontSize={10} textAnchor="middle">{data?.hours[index]}</text>
+            ) : null)}
+            <text x={width / 2} y={height + 12} fill="#6b7367" fontSize={10} textAnchor="middle">时间</text>
+            <text x={8} y={12} fill="#6b7367" fontSize={10} textAnchor="start">倍数</text>
           </svg>
         ) : (
           <div className="empty">加载中…</div>

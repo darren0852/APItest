@@ -13,7 +13,7 @@ interface PricingGroup { id: number; name: string; model_count: number; key_coun
 interface SupplierRoute { id: number; model_name: string; upstream_model: string; endpoint_url: string; api_key_last4: string; }
 interface LedgerEntry { id: number; user_id: number; type: string; amount: number; balance_after: number; reference: string; created_at: string; }
 interface AuditEntry { id: number; admin: string; action: string; target_type: string | null; target_id: string | null; detail: string | null; created_at: string; }
-interface HourlyMultiplierRow { model: string; hourly_multipliers: number[]; }
+interface HourlyMultiplierRow { model: string; business_date: string; hourly_multipliers: number[]; }
 
 const API = "https://api.vemixapp.com";
 
@@ -33,6 +33,8 @@ export default function AdminPage() {
   const [deleteGroup, setDeleteGroup] = useState<PricingGroup | null>(null);
   const [editMultiplier, setEditMultiplier] = useState<HourlyMultiplierRow | null>(null);
   const [multipliers, setMultipliers] = useState<HourlyMultiplierRow[]>([]);
+  const [multiplierDate, setMultiplierDate] = useState("");
+  const [multiplierDays, setMultiplierDays] = useState<HourlyMultiplierRow[]>([]);
   const [supplierRoutes, setSupplierRoutes] = useState<SupplierRoute[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -197,16 +199,26 @@ export default function AdminPage() {
   };
 
   const openMultiplier = async (model: string) => {
-    const row = (await get("model-multipliers") as HourlyMultiplierRow[] | null)?.find((item) => item.model === model);
-    if (row) setEditMultiplier(row);
+    const base = new Date();
+    const dates = Array.from({ length: 3 }, (_, index) => {
+      const value = new Date(base);
+      value.setDate(base.getDate() + index);
+      return value.toISOString().slice(0, 10);
+    });
+    const dayRows = await Promise.all(dates.map(async (date) => {
+      const result = await get(`model-multiplier-day?model=${encodeURIComponent(model)}&business_date=${date}`) as HourlyMultiplierRow | null;
+      return result || { model, business_date: date, hourly_multipliers: [] };
+    }));
+    setMultiplierDate(dates[0]);
+    setEditMultiplier(dayRows[0]);
+    setMultiplierDays(dayRows);
   };
 
   const saveMultiplier = async () => {
     if (!editMultiplier) return;
-    await post("model-multipliers", editMultiplier, async () => {
+    await post("model-multiplier-day", editMultiplier, async () => {
       setEditMultiplier(null);
-      const refreshed = await get("model-multipliers");
-      if (refreshed) setMultipliers(refreshed);
+      setMultiplierDays((rows) => rows.map((row) => row.business_date === editMultiplier.business_date ? editMultiplier : row));
     });
   };
 
@@ -546,11 +558,22 @@ export default function AdminPage() {
               <strong>峰谷倍数 · {editMultiplier.model}</strong>
               <button className="button button-ghost" onClick={() => setEditMultiplier(null)}>×</button>
             </div>
-            <div className="stat-mini" style={{ marginBottom: 15 }}>这里是真实计费曲线，所有请求会按当前小时倍数计算。</div>
+            <div className="tab-bar" style={{ marginTop: 6 }}>
+              {(multiplierDays.length ? multiplierDays : [editMultiplier]).map((row) => (
+                <button
+                  key={row.business_date}
+                  className={`chip${multiplierDate === row.business_date ? " active" : ""}`}
+                  onClick={() => { setMultiplierDate(row.business_date); setEditMultiplier(multiplierDays.find((item) => item.business_date === row.business_date) || row); }}
+                >
+                  {row.business_date}
+                </button>
+              ))}
+            </div>
+            <div className="stat-mini" style={{ marginBottom: 15 }}>日期 + 每小时计费倍数，未来两天可调整。</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
               {(editMultiplier.hourly_multipliers || []).map((value, hour) => (
                 <div key={hour}>
-                  <label className="label">{String(hour).padStart(2, "0")}:00</label>
+                  <label className="label">{editMultiplier.business_date.replace("-", "/").slice(5)} {String(hour).padStart(2, "0")}:00</label>
                   <input
                     className="input"
                     type="number"
