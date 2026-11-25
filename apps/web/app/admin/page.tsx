@@ -251,8 +251,8 @@ export default function AdminPage() {
           <div className="card"><div className="metric-label">已计费收入</div><div className="metric-value">RM {stats.total_cost.toFixed(2)}</div><div className="stat-mini">{stats.total_output_tokens.toLocaleString()} 输出 Token</div></div>
           <div className="card"><div className="metric-label">总钱包余额</div><div className="metric-value">RM {finance.total_wallet_balance.toFixed(2)}</div><div className="stat-mini">已预留 RM {finance.total_reserved.toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">充值总额</div><div className="metric-value">RM {finance.total_topups.toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">用量计费</div><div className="metric-value">RM {finance.total_usage_billed.toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">套餐购买</div><div className="metric-value">RM {finance.total_plan_purchases.toFixed(2)}</div></div>
+          <div className="card"><div className="metric-label">用量计费</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div></div>
+          <div className="card"><div className="metric-label">套餐购买</div><div className="metric-value">RM {Math.abs(finance.total_plan_purchases).toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">封禁用户</div><div className="metric-value">{stats.suspended_users}</div><div className="stat-mini">{stats.flagged_users} 个风险标记</div></div>
           <div className="card"><div className="metric-label">模型连接</div><div className="metric-value">{supplierRoutes.length}</div><div className="stat-mini">出售模型已对接上游</div></div>
         </div>
