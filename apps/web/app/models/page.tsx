@@ -67,7 +67,7 @@ function formatRM(value: number | undefined, fallback = "—") {
   return `RM ${(Number(value) || 0).toFixed(2)}`;
 }
 
-const MULTIPLIER_CACHE_KEY = "public-multipliers-cache-v1";
+const MULTIPLIER_CACHE_KEY = "public-multipliers-cache-v2";
 const MULTIPLIER_CACHE_TTL = 60_000;
 
 interface DetailData {
