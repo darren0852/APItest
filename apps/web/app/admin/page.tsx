@@ -7,7 +7,7 @@ import AppShell from "../components/AppShell";
 interface AdminUser { id: number; email: string; status: string; risk_flag: boolean; created_at: string; balance: number; reserved: number; active_keys: number; total_requests: number; active_plans: number; }
 interface UserDetail { user: any; wallet: any; keys: any[]; recent_usage: any[]; recent_ledger: any[]; entitlements: any[]; }
 interface Stats { total_users: number; active_users: number; suspended_users: number; flagged_users: number; active_api_keys: number; total_api_requests: number; total_input_tokens: number; total_output_tokens: number; total_cost: number; total_wallet_balance: number; active_plans: number; }
-interface Finance { total_topups: number; total_usage_billed: number; total_plan_purchases: number; total_wallet_balance: number; total_reserved: number; total_customer_wallet_balance: number; admin_wallet_balance: number; total_supplier_cost_rmb: number; }
+interface Finance { total_topups: number; total_usage_billed: number; total_plan_purchases: number; total_wallet_balance: number; total_reserved: number; total_customer_wallet_balance: number; admin_wallet_balance: number; total_supplier_cost_cny: number; }
 interface PriceRow { model: string; group_name: string | null; input_cost: number | null; output_cost: number | null; cache_write_cost: number | null; cache_read_cost: number | null; cost_version: number | null; input_sell: number | null; output_sell: number | null; cache_write_sell: number | null; cache_read_sell: number | null; sell_version: number | null; }
 interface PricingGroup { id: number; name: string; model_count: number; key_count: number; }
 interface SupplierRoute { id: number; model_name: string; upstream_model: string; endpoint_url: string; api_key_last4: string; }
@@ -28,6 +28,7 @@ export default function AdminPage() {
   const [selectedGroup, setSelectedGroup] = useState("");
   const [groupName, setGroupName] = useState("");
   const [sortMode, setSortMode] = useState<"group" | "model">("group");
+  const [exchangeRate, setExchangeRate] = useState("1");
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
   const [deletePrice, setDeletePrice] = useState<PriceRow | null>(null);
@@ -285,6 +286,7 @@ export default function AdminPage() {
     { id: "audit", label: "审计" },
   ];
   const selectedGroupObject = groups.find((group) => group.name === selectedGroup) || groups[0] || null;
+  const exchangeRateValue = Number(exchangeRate) || 1;
   const selectedGroupValue = selectedGroupObject?.name || "";
   const sortedPrices = [...prices].sort((first, second) => {
     if (sortMode === "group") {
@@ -319,7 +321,7 @@ export default function AdminPage() {
           <div className="card"><div className="metric-label">套餐购买</div><div className="metric-value">RM {Math.abs(finance.total_plan_purchases).toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">客户总余额</div><div className="metric-value">RM {finance.total_customer_wallet_balance.toFixed(2)}</div><div className="stat-mini">管理员余额 RM {finance.admin_wallet_balance.toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">客户已用余额</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div><div className="stat-mini">按实际扣费记录</div></div>
-          <div className="card"><div className="metric-label">供应商成本</div><div className="metric-value">¥{finance.total_supplier_cost_rmb.toFixed(2)}</div><div className="stat-mini">按供应商价格表</div></div>
+          <div className="card"><div className="metric-label">供应商成本</div><div className="metric-value">RM {(finance.total_supplier_cost_cny * exchangeRateValue).toFixed(2)}</div><div className="stat-mini">按汇率 1 CNY = RM {exchangeRateValue}</div></div>
         </div>
         </>
       )}
@@ -403,9 +405,23 @@ export default function AdminPage() {
           <div className="card-title">
             <div>
               <h2 className="section-title">模型管理</h2>
-              <div className="stat-mini">价格单位 RM</div>
+              <div className="stat-mini">价格单位 RM · 成本按汇率换算</div>
             </div>
-            <button className="button button-primary" onClick={() => setShowModelModal(true)}>创建模型</button>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+              <div>
+                <label className="label" style={{ marginBottom: 4 }}>汇率（1 CNY = RM）</label>
+                <input
+                  className="input"
+                  style={{ width: 130 }}
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={exchangeRate}
+                  onChange={(event) => { setExchangeRate(event.target.value); if (typeof window !== "undefined") { localStorage.setItem("adminExchangeRate", event.target.value); } }}
+                />
+              </div>
+              <button className="button button-primary" onClick={() => setShowModelModal(true)}>创建模型</button>
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -452,13 +468,13 @@ export default function AdminPage() {
                       </select>
                     </td>
                     <td>RM {(price.input_sell ?? 0).toFixed(2)}</td>
-                    <td>RM {(price.input_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {((price.input_cost ?? 0) * exchangeRateValue).toFixed(2)}</td>
                     <td>RM {(price.output_sell ?? 0).toFixed(2)}</td>
-                    <td>RM {(price.output_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {((price.output_cost ?? 0) * exchangeRateValue).toFixed(2)}</td>
                     <td>RM {(price.cache_write_sell ?? 0).toFixed(2)}</td>
-                    <td>RM {(price.cache_write_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {((price.cache_write_cost ?? 0) * exchangeRateValue).toFixed(2)}</td>
                     <td>RM {(price.cache_read_sell ?? 0).toFixed(2)}</td>
-                    <td>RM {(price.cache_read_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {((price.cache_read_cost ?? 0) * exchangeRateValue).toFixed(2)}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button
                         className="button button-ghost"
@@ -639,13 +655,13 @@ export default function AdminPage() {
             </select>
             <div className="grid grid-2">
               <div><label className="label">输入售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.input_sell} onChange={(event) => setEditPrice({ ...editPrice, input_sell: Number(event.target.value) })} /></div>
-              <div><label className="label">输入成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.input_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, input_cost: Number(event.target.value) })} /></div>
+              <div><label className="label">输入成本（CNY）</label><input className="input" type="number" step="0.000001" value={editPrice.input_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, input_cost: Number(event.target.value) })} /></div>
               <div><label className="label">输出售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.output_sell} onChange={(event) => setEditPrice({ ...editPrice, output_sell: Number(event.target.value) })} /></div>
-              <div><label className="label">输出成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.output_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, output_cost: Number(event.target.value) })} /></div>
+              <div><label className="label">输出成本（CNY）</label><input className="input" type="number" step="0.000001" value={editPrice.output_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, output_cost: Number(event.target.value) })} /></div>
               <div><label className="label">缓存创建售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_write_sell ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_write_sell: Number(event.target.value) })} /></div>
-              <div><label className="label">缓存创建成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_write_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_write_cost: Number(event.target.value) })} /></div>
+              <div><label className="label">缓存创建成本（CNY）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_write_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_write_cost: Number(event.target.value) })} /></div>
               <div><label className="label">缓存读取售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_read_sell ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_read_sell: Number(event.target.value) })} /></div>
-              <div><label className="label">缓存读取成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_read_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_read_cost: Number(event.target.value) })} /></div>
+              <div><label className="label">缓存读取成本（CNY）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_read_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_read_cost: Number(event.target.value) })} /></div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
               <button className="button button-secondary" onClick={() => setEditPrice(null)}>取消</button>

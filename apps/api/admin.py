@@ -97,7 +97,7 @@ def audit_log(db, admin_id: int, action: str, target_type: str = None, target_id
     entry = AuditLog(admin_id=admin_id, action=action, target_type=target_type, target_id=target_id, detail=detail)
     db.add(entry)
 
-def _supplier_cost_rmb(db):
+def _supplier_cost_cny(db):
     from decimal import Decimal
     from sqlalchemy import func
 
@@ -682,7 +682,7 @@ async def get_finance(admin: User = Depends(require_admin)):
             "total_reserved": float(total_reserved),
             "total_customer_wallet_balance": float(customer_wallet),
             "admin_wallet_balance": float(admin_wallet),
-            "total_supplier_cost_rmb": float(_supplier_cost_rmb(db)),
+            "total_supplier_cost_cny": float(_supplier_cost_cny(db)),
         }
     finally:
         db.close()
