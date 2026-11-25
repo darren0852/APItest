@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Line } from "react-chartjs-2";
 import AppShell from "../components/AppShell";
 import {
   PublicModelCacheGroup,
@@ -11,6 +21,8 @@ import {
 } from "../../lib/public-models";
 
 type PublicModel = PublicModelCacheItem;
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 const MODEL_FEATURES: Record<string, number[]> = {
   "glm-5.3": [1, 2],
@@ -90,12 +102,6 @@ function SparkLine({ series }: { series: number[] }) {
   );
 }
 
-interface DetailData {
-  ranges: { label: string; series: number[] }[];
-  hours: string[];
-  current_multiplier: number;
-}
-
 function readCachedMultiplier(model: string): DetailData | null {
   if (typeof window === "undefined") return null;
   try {
@@ -133,14 +139,25 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
       .catch(() => setData(null));
   }, [model]);
   const series = data?.ranges?.[0]?.series || data?.series || [];
-  const min = Math.min(...series, 1);
-  const max = Math.max(...series, 1.01);
-  const pad = (max - min) * 0.15 || 0.1;
-  const lo = min - pad;
-  const hi = max + pad;
-  const width = 560;
-  const height = 220;
-  const coords = series.map((value, index) => `${(index / Math.max(series.length - 1, 1)) * width},${height - ((value - lo) / (hi - lo)) * height}`).join(" ");
+  const min = series.length ? Math.min(...series) : 1;
+  const max = series.length ? Math.max(...series) : 1;
+  const chartData = {
+    labels: data?.hours || [],
+    datasets: [{
+      label: "计费倍数",
+      data: series,
+      borderColor: "#6b7d5a",
+      backgroundColor: "rgba(106,125,90,.12)",
+      borderWidth: 2,
+      pointBackgroundColor: "#4a9d8b",
+      pointBorderColor: "#ffffff",
+      pointBorderWidth: 2,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0,
+      fill: false,
+    }],
+  };
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card" onClick={(event) => event.stopPropagation()}>
@@ -152,23 +169,31 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
           <button className="btn btn-ghost" onClick={onClose}>关闭</button>
         </div>
         {series.length > 0 ? (
-          <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="multiplier-chart">
-            <polyline points={coords} fill="none" stroke="var(--accent-2)" strokeWidth="2" />
-            {[0, .25, .5, .75, 1].map((ratio) => {
-              const y = height - ((height - 20) * ratio) - 20;
-              return (
-                <g key={ratio}>
-                  <line x1={40} x2={width} y1={y} y2={y} stroke="rgba(0,0,0,0.08)" strokeDasharray="3 5" />
-                  <text x={4} y={y + 3} fill="#6b7367" fontSize={10}>倍数 {(lo + (hi - lo) * ratio).toFixed(2)}</text>
-                </g>
-              );
-            })}
-            {series.map((value, index) => index % 6 === 0 ? (
-              <text key={index} x={(index / (series.length - 1)) * width} y={height - 5} fill="#6b7367" fontSize={10} textAnchor="middle">{data?.hours[index]}</text>
-            ) : null)}
-            <text x={width / 2} y={height + 12} fill="#6b7367" fontSize={10} textAnchor="middle">时间</text>
-            <text x={8} y={12} fill="#6b7367" fontSize={10} textAnchor="start">倍数</text>
-          </svg>
+          <div style={{ height: 280, position: "relative" }}>
+            <Line data={chartData} options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: {
+                  title: { display: true, text: "时间" },
+                  ticks: { maxRotation: 60, minRotation: 45, font: { size: 10 } },
+                  grid: { display: false },
+                },
+                y: {
+                  title: { display: true, text: "计费倍数" },
+                  beginAtZero: false,
+                  ticks: { callback: (value) => `${Number(value).toFixed(2)}` },
+                  grid: { color: "rgba(0,0,0,.06)" },
+                },
+              },
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: { label: (context) => `${context.parsed.y.toFixed(2)}×` },
+                },
+              },
+            }} />
+          </div>
         ) : (
           <div className="empty">加载中…</div>
         )}

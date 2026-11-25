@@ -2,6 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Doughnut, Line } from "react-chartjs-2";
 import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
 
@@ -24,6 +35,16 @@ interface DashboardData {
 }
 
 const API = "https://api.vemixapp.com";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Tooltip,
+  Legend,
+);
 
 function formatTokens(value: number) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
@@ -75,19 +96,24 @@ export default function DashboardPage() {
   const todayTokens = dashboard ? dashboard.today.input_tokens + dashboard.today.output_tokens : 0;
   const totalTokens = dashboard ? dashboard.total.input_tokens + dashboard.total.output_tokens : 0;
 
-  const donutAngles = useMemo(() => {
-    if (!dashboard || !dashboard.model_distribution.length) return [];
-    const total = dashboard.model_distribution.reduce((sum, item) => sum + item.tokens, 0) || 1;
-    let cursor = 0;
-    return dashboard.model_distribution.map((item, index) => {
-      const ratio = item.tokens / total;
-      const start = cursor * 360;
-      cursor += ratio;
-      return { ...item, start, ratio, color: `hsl(${210 + index * 36} 72% 62%)` };
-    });
+  const donutData = useMemo(() => {
+    if (!dashboard || !dashboard.model_distribution.length) return null;
+    const labels = dashboard.model_distribution.map((item) => item.model);
+    const values = dashboard.model_distribution.map((item) => item.tokens);
+    const colors = labels.map((_, index) => `hsl(${210 + index * 36} 72% 62%)`);
+    return {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderColor: "#ffffff",
+        borderWidth: 2,
+        cutout: "68%",
+      }],
+    };
   }, [dashboard]);
 
-  const chart = useMemo(() => {
+  const chartData = useMemo(() => {
     if (!dashboard) return null;
     const points = dashboard.trend.map((item) => ({
       date: item.date,
@@ -96,14 +122,16 @@ export default function DashboardPage() {
       cacheWrite: item.cache_write_tokens,
       cacheRead: item.cache_read_tokens,
     }));
-    const max = Math.max(...points.flatMap((point) => [point.input, point.output, point.cacheWrite, point.cacheRead]), 1);
-    const width = 720;
-    const height = 220;
-    const x = (index: number) => 42 + (points.length <= 1 ? 0 : (index * (width - 84)) / (points.length - 1));
-    const y = (value: number) => height - 28 - (value / max) * (height - 56);
-    const toPath = (key: "input" | "output" | "cacheWrite" | "cacheRead") => points.map((point, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(" ");
-    return { width, height, max, x, y, points, paths: { input: toPath("input"), output: toPath("output"), cacheWrite: toPath("cacheWrite"), cacheRead: toPath("cacheRead") } };
-  }, [dashboard]);
+    return {
+      labels: points.map((point) => range === "today" ? point.date.slice(11, 16) : point.date),
+      datasets: [
+        { label: "输入", data: points.map((point) => point.input), borderColor: "#6b7d5a", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "输出", data: points.map((point) => point.output), borderColor: "#4a9d8b", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "缓存创建", data: points.map((point) => point.cacheWrite), borderColor: "#b08968", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "缓存读取", data: points.map((point) => point.cacheRead), borderColor: "#82956f", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+      ],
+    };
+  }, [dashboard, range]);
 
   const statCard = (label: string, value: string, sub: string) => (
     <div className="card"><div className="metric-label">{label}</div><div className="metric-value">{value}</div><div className="stat-mini">{sub}</div></div>
@@ -150,22 +178,15 @@ export default function DashboardPage() {
         <div className="card">
           <div className="card-title"><h2 className="section-title">模型分布</h2><span className="stat-mini">{range} 天</span></div>
           {dashboard && dashboard.model_distribution.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 18, alignItems: "center" }}>
-              <svg viewBox="0 0 200 200" width={180} height={180}>
-                <circle cx="100" cy="100" r="72" fill="none" stroke="rgba(148,163,184,.18)" strokeWidth="32" />
-                {donutAngles.map((item) => (
-                  <circle
-                    key={item.model}
-                    cx="100" cy="100" r="72"
-                    fill="none"
-                    stroke={item.color}
-                    strokeWidth="32"
-                    strokeDasharray={`${Math.max(item.ratio, 0) * 452} 452`}
-                    strokeLinecap="round"
-                    transform={`rotate(${item.start - 90} 100 100)`}
-                  />
-                ))}
-              </svg>
+            <div style={{ display: "grid", gridTemplateColumns: "230px 1fr", gap: 18, alignItems: "center" }}>
+              <div style={{ height: 230, position: "relative" }}>
+                <Doughnut data={donutData} options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  cutout: "68%",
+                  plugins: { legend: { display: false } },
+                }} />
+              </div>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead><tr><th>模型</th><th>请求</th><th>Token</th><th>消费</th></tr></thead>
@@ -186,41 +207,30 @@ export default function DashboardPage() {
               <h2 className="section-title" style={{ margin: 0 }}>Token 使用趋势</h2>
               <span className="stat-mini">{range === "today" ? "今天" : range === "week" ? "本周" : "本月"}</span>
             </div>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              {[
-                ["输入", "#6b7d5a", chart?.paths.input],
-                ["输出", "#4a9d8b", chart?.paths.output],
-                ["缓存创建", "#b08968", chart?.paths.cacheWrite],
-                ["缓存读取", "#82956f", chart?.paths.cacheRead],
-              ].map(([label, color, path]) => (
-                <span key={label as string} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7367" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 99, background: color as string, display: "inline-block" }} />
-                  {label as string}
-                </span>
-              ))}
-            </div>
+            <div className="stat-mini">Chart.js 插值模式</div>
           </div>
-          {chart && dashboard && chart.points.some((point) => point.input + point.output + point.cacheWrite + point.cacheRead > 0) ? (
-            <svg viewBox={`0 0 ${chart.width} ${chart.height}`} width="100%" height="260">
-              {chart.points.some((point) => point.input + point.output + point.cacheWrite + point.cacheRead > 0) && (
-                <>
-                  <path d={chart.paths.input} fill="none" stroke="#6b7d5a" strokeWidth="3" strokeLinecap="round" />
-                  <path d={chart.paths.output} fill="none" stroke="#4a9d8b" strokeWidth="3" strokeLinecap="round" />
-                  <path d={chart.paths.cacheWrite} fill="none" stroke="#b08968" strokeWidth="3" strokeLinecap="round" />
-                  <path d={chart.paths.cacheRead} fill="none" stroke="#82956f" strokeWidth="3" strokeLinecap="round" />
-                </>
-              )}
-              {chart.points.map((point, index) => {
-                const label = range === "today" ? point.date.slice(11, 16) : point.date;
-                return <text key={point.date} x={chart.x(index)} y={chart.height - 8} fill="#9ba39a" fontSize={9} textAnchor="middle">{label}</text>;
-              })}
-              {[0, .25, .5, .75, 1].map((ratio) => (
-                <g key={ratio}>
-                  <line x1={42} x2={chart.width - 42} y1={chart.y(chart.max * ratio)} y2={chart.y(chart.max * ratio)} stroke="rgba(0,0,0,0.06)" strokeDasharray="3 5" />
-                  <text x={8} y={chart.y(chart.max * ratio) + 3} fill="#9ba39a" fontSize={10} textAnchor="start">{formatTokens(chart.max * ratio)}</text>
-                </g>
-              ))}
-            </svg>
+          {chartData && dashboard && chartData.labels.length ? (
+            <div style={{ height: 300, position: "relative" }}>
+              <Line data={chartData} options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                  x: {
+                    title: { display: true, text: "时间" },
+                    ticks: { maxRotation: 60, minRotation: 45, font: { size: 10 } },
+                    grid: { display: false },
+                  },
+                  y: {
+                    title: { display: true, text: "Token" },
+                    beginAtZero: true,
+                    ticks: { callback: (value) => formatTokens(Number(value)) },
+                    grid: { color: "rgba(0,0,0,.06)" },
+                  },
+                },
+                plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+              }} />
+            </div>
           ) : <div className="empty">所选时间范围内没有趋势数据。</div>}
         </div>
       </div>

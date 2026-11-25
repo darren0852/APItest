@@ -342,7 +342,7 @@ button, input, select, textarea { font: inherit; color: inherit; border: none; b
   padding: 16px; background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
 }
 .modal-card {
-  width: 100%; max-width: 540px; max-height: 88vh; overflow-y: auto;
+  width: 100%; max-width: 760px; max-height: 88vh; overflow-y: auto;
   background: #ffffff; border: 1px solid var(--line-strong);
   border-radius: var(--r-lg); padding: 26px;
   box-shadow: 0 24px 60px rgba(0,0,0,.35);
