@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from "chart.js";
+import { Line } from "react-chartjs-2";
 import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
 
@@ -14,8 +16,10 @@ interface SupplierRoute { id: number; model_name: string; upstream_model: string
 interface LedgerEntry { id: number; user_id: number; type: string; amount: number; balance_after: number; reference: string; created_at: string; }
 interface AuditEntry { id: number; admin: string; action: string; target_type: string | null; target_id: string | null; detail: string | null; created_at: string; }
 interface HourlyMultiplierRow { model: string; business_date: string; hourly_multipliers: number[]; }
+interface AnalyticsSeries { range: string; buckets: string[]; usage: { input: number[]; output: number[]; cache_write: number[]; cache_read: number[]; }; revenue: number[]; supplier_cost: number[]; profit: number[]; wallet_balance: number[]; groups: { name: string; series: number[] }[]; }
 
 const API = "https://api.vemixapp.com";
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 export default function AdminPage() {
   const [tab, setTab] = useState("stats");
@@ -29,6 +33,8 @@ export default function AdminPage() {
   const [groupName, setGroupName] = useState("");
   const [sortMode, setSortMode] = useState<"group" | "model">("group");
   const [exchangeRate, setExchangeRate] = useState("1");
+  const [analyticsRange, setAnalyticsRange] = useState<"today" | "month" | "year">("today");
+  const [analyticsSeries, setAnalyticsSeries] = useState<AnalyticsSeries | null>(null);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
   const [deletePrice, setDeletePrice] = useState<PriceRow | null>(null);
@@ -85,10 +91,18 @@ export default function AdminPage() {
     const multiplierData = await get("model-multipliers"); if (multiplierData) setMultipliers(multiplierData);
     const routeData = await get("supplier-routes"); if (routeData) setSupplierRoutes(routeData);
     const ledgerData = await get("ledger"); if (ledgerData) setLedger(ledgerData);
-    const auditData = await get("audit"); if (auditData) setAudit(auditData);
-  }, [get]);
+    const analyticData = await get(`analytics/series?range=${analyticsRange}`); if (analyticData) setAnalyticsSeries(analyticData);
+  }, [get, analyticsRange]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      const data = await get(`analytics/series?range=${analyticsRange}`);
+      if (data) setAnalyticsSeries(data);
+    };
+    loadAnalytics();
+  }, [analyticsRange, get]);
 
   const post = useCallback(async (path: string, body: any, done: () => Promise<void> | void) => {
     const token = localStorage.getItem("token");
@@ -282,6 +296,7 @@ export default function AdminPage() {
     { id: "users", label: "用户" },
     { id: "pricing", label: "模型管理" },
     { id: "suppliers", label: "模型连接" },
+    { id: "analytics", label: "数据统计" },
     { id: "ledger", label: "账本" },
     { id: "audit", label: "审计" },
   ];
@@ -311,17 +326,10 @@ export default function AdminPage() {
           <button className="button button-danger" onClick={resetTestAccounting}>重置测试账本</button>
         </div>
         <div className="grid grid-4">
-          <div className="card"><div className="metric-label">用户总数</div><div className="metric-value">{stats.total_users}</div><div className="metric-trend">{stats.active_users} 个可用</div></div>
-          <div className="card"><div className="metric-label">可用 Key</div><div className="metric-value">{stats.active_api_keys}</div><div className="stat-mini">{stats.active_plans} 个可用套餐</div></div>
-          <div className="card"><div className="metric-label">总请求数</div><div className="metric-value">{stats.total_api_requests.toLocaleString()}</div><div className="stat-mini">{(stats.total_input_tokens + stats.total_output_tokens).toLocaleString()} Token</div></div>
-          <div className="card"><div className="metric-label">已计费收入</div><div className="metric-value">RM {stats.total_cost.toFixed(2)}</div><div className="stat-mini">{stats.total_output_tokens.toLocaleString()} 输出 Token</div></div>
-          <div className="card"><div className="metric-label">总钱包余额</div><div className="metric-value">RM {finance.total_wallet_balance.toFixed(2)}</div><div className="stat-mini">已预留 RM {finance.total_reserved.toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">充值总额</div><div className="metric-value">RM {finance.total_topups.toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">用量计费</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">套餐购买</div><div className="metric-value">RM {Math.abs(finance.total_plan_purchases).toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">客户总余额</div><div className="metric-value">RM {finance.total_customer_wallet_balance.toFixed(2)}</div><div className="stat-mini">管理员余额 RM {finance.admin_wallet_balance.toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">客户已用余额</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div><div className="stat-mini">按实际扣费记录</div></div>
-          <div className="card"><div className="metric-label">供应商成本</div><div className="metric-value">RM {(finance.total_supplier_cost_cny * exchangeRateValue).toFixed(2)}</div><div className="stat-mini">按汇率 1 CNY = RM {exchangeRateValue}</div></div>
+          <div className="card"><div className="metric-label">已激活用户</div><div className="metric-value">{stats.active_users}</div></div>
+          <div className="card"><div className="metric-label">已激活 Key</div><div className="metric-value">{stats.active_api_keys}</div></div>
+          <div className="card"><div className="metric-label">客户总余额</div><div className="metric-value">RM {finance.total_customer_wallet_balance.toFixed(2)}</div></div>
+          <div className="card"><div className="metric-label">已用成本</div><div className="metric-value">RM {(finance.total_supplier_cost_cny * exchangeRateValue).toFixed(2)}</div></div>
         </div>
         </>
       )}
@@ -501,6 +509,130 @@ export default function AdminPage() {
             </table>
           </div>
           {sortedPrices.length === 0 && <div className="empty">还没有模型。</div>}
+        </div>
+      )}
+
+      {tab === "analytics" && (
+        <div className="card">
+          <div className="card-title">
+            <div>
+              <h2 className="section-title">数据统计</h2>
+              <div className="stat-mini">全部单位按 RM / Token 统计</div>
+            </div>
+            <select className="select" style={{ width: 130 }} value={analyticsRange} onChange={(event) => setAnalyticsRange(event.target.value as "today" | "month" | "year")}>
+              <option value="today">今日</option>
+              <option value="month">本月</option>
+              <option value="year">今年</option>
+            </select>
+          </div>
+          <div className="grid grid-2" style={{ marginTop: 15 }}>
+            <div className="card">
+              <div className="card-title"><h3 className="section-title">所有用户用量</h3><span className="stat-mini">输入 / 输出 / 缓存创建 / 缓存读取</span></div>
+              {analyticsSeries ? (
+                <div style={{ height: 300, position: "relative" }}>
+                  <Line
+                    data={{
+                      labels: analyticsSeries.buckets,
+                      datasets: [
+                        { label: "输入", data: analyticsSeries.usage.input, borderColor: "#2563eb", backgroundColor: "rgba(37, 99, 235, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "输出", data: analyticsSeries.usage.output, borderColor: "#10b981", backgroundColor: "rgba(16, 185, 129, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存创建", data: analyticsSeries.usage.cache_write, borderColor: "#f59e0b", backgroundColor: "rgba(245, 158, 11, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存读取", data: analyticsSeries.usage.cache_read, borderColor: "#8b5cf6", backgroundColor: "rgba(139, 92, 246, .12)", tension: 0.3, borderWidth: 2 },
+                      ],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      interaction: { mode: "index", intersect: false },
+                      plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+                      scales: {
+                        x: { title: { display: true, text: analyticsRange === "today" ? "时间（小时）" : analyticsRange === "month" ? "日期" : "月份" }, grid: { display: false } },
+                        y: { title: { display: true, text: "Token" }, beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" } },
+                      },
+                    }}
+                  />
+                </div>
+              ) : <div className="empty">正在加载。</div>}
+            </div>
+            <div className="card">
+              <div className="card-title"><h3 className="section-title">客户总余额</h3><span className="stat-mini">RM</span></div>
+              {analyticsSeries ? (
+                <div style={{ height: 300, position: "relative" }}>
+                  <Line
+                    data={{
+                      labels: analyticsSeries.buckets,
+                      datasets: [{ label: "客户总余额", data: analyticsSeries.wallet_balance, borderColor: "#16a34a", backgroundColor: "rgba(22, 163, 74, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      interaction: { mode: "index", intersect: false },
+                      plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+                      scales: {
+                        x: { title: { display: true, text: analyticsRange === "today" ? "时间（小时）" : analyticsRange === "month" ? "日期" : "月份" }, grid: { display: false } },
+                        y: { title: { display: true, text: "RM" }, beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" } },
+                      },
+                    }}
+                  />
+                </div>
+              ) : <div className="empty">正在加载。</div>}
+            </div>
+          </div>
+          <div className="grid grid-2" style={{ marginTop: 15 }}>
+            <div className="card">
+              <div className="card-title"><h3 className="section-title">分组使用率</h3><span className="stat-mini">按 Token</span></div>
+              {analyticsSeries && analyticsSeries.groups.length > 0 ? (
+                <div style={{ height: 300, position: "relative" }}>
+                  <Line
+                    data={{
+                      labels: analyticsSeries.buckets,
+                      datasets: analyticsSeries.groups.map((group, index) => ({
+                        label: group.name,
+                        data: group.series,
+                        borderColor: ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444"][index % 5],
+                        backgroundColor: ["rgba(37, 99, 235, .12)", "rgba(16, 185, 129, .12)", "rgba(245, 158, 11, .12)", "rgba(139, 92, 246, .12)", "rgba(239, 68, 68, .12)"][index % 5],
+                        tension: 0.3,
+                        borderWidth: 2,
+                      })),
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      interaction: { mode: "index", intersect: false },
+                      plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+                      scales: {
+                        x: { title: { display: true, text: analyticsRange === "today" ? "时间（小时）" : analyticsRange === "month" ? "日期" : "月份" }, grid: { display: false } },
+                        y: { title: { display: true, text: "Token" }, beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" } },
+                      },
+                    }}
+                  />
+                </div>
+              ) : <div className="empty">这个时间范围没有分组数据。</div>}
+            </div>
+            <div className="card">
+              <div className="card-title"><h3 className="section-title">扣除成本后盈利</h3><span className="stat-mini">RM</span></div>
+              {analyticsSeries ? (
+                <div style={{ height: 300, position: "relative" }}>
+                  <Line
+                    data={{
+                      labels: analyticsSeries.buckets,
+                      datasets: [{ label: "RM", data: analyticsSeries.revenue.map((value, index) => Number((value - analyticsSeries.supplier_cost[index] * exchangeRateValue).toFixed(2))), borderColor: "#ef4444", backgroundColor: "rgba(239, 68, 68, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      interaction: { mode: "index", intersect: false },
+                      plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+                      scales: {
+                        x: { title: { display: true, text: analyticsRange === "today" ? "时间（小时）" : analyticsRange === "month" ? "日期" : "月份" }, grid: { display: false } },
+                        y: { title: { display: true, text: "RM" }, beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" } },
+                      },
+                    }}
+                  />
+                </div>
+              ) : <div className="empty">正在加载。</div>}
+            </div>
+          </div>
         </div>
       )}
 

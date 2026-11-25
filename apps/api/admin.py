@@ -97,6 +97,34 @@ def audit_log(db, admin_id: int, action: str, target_type: str = None, target_id
     entry = AuditLog(admin_id=admin_id, action=action, target_type=target_type, target_id=target_id, detail=detail)
     db.add(entry)
 
+def _wallet_summary(db):
+    from sqlalchemy import func
+
+    customer_wallets = (
+        db.query(Wallet)
+        .join(User, Wallet.user_id == User.id)
+        .filter(User.status != "admin")
+        .all()
+    )
+    admin_wallet = (
+        db.query(Wallet)
+        .join(User, Wallet.user_id == User.id)
+        .filter(User.email == "ngdarren0852@gmail.com")
+        .first()
+    )
+    customer_usage = (
+        db.query(func.coalesce(func.sum(WalletLedger.amount), 0))
+        .join(User, User.id == WalletLedger.user_id)
+        .filter(WalletLedger.entry_type == "usage", User.status != "admin")
+        .scalar()
+    )
+    return (
+        sum((wallet.available_balance or 0) for wallet in customer_wallets),
+        admin_wallet.available_balance or 0 if admin_wallet else 0,
+        customer_usage or 0,
+    )
+
+
 def _supplier_cost_cny(db):
     from decimal import Decimal
     from sqlalchemy import func
@@ -660,6 +688,183 @@ async def reset_accounting(admin: User = Depends(require_admin)):
     finally:
         db.close()
 
+@router.get("/analytics/series")
+async def get_analytics_series(range: str = "today", admin: User = Depends(require_admin)):
+    from datetime import timedelta, timezone as dt_timezone
+    from decimal import Decimal
+
+    db = SessionLocal()
+    try:
+        tz = dt_timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+        if range == "month":
+            start = datetime(now.year, now.month, 1, tzinfo=tz)
+            end = None
+            bucket_count = 31
+            bucket_seconds = 86400
+            labels = [str(day) for day in range(1, 32)]
+        elif range == "year":
+            start = datetime(now.year, 1, 1, tzinfo=tz)
+            end = None
+            bucket_count = 12
+            bucket_seconds = 31 * 86400
+            labels = [f"{month:02d}月" for month in range(1, 13)]
+        else:
+            start = datetime(now.year, now.month, now.day, tzinfo=tz)
+            end = None
+            bucket_count = 24
+            bucket_seconds = 3600
+            labels = [f"{hour:02d}:00" for hour in range(24)]
+        period_start = start
+        period_end = period_start + timedelta(seconds=bucket_seconds * bucket_count)
+        records = db.query(UsageRecord).filter(UsageRecord.created_at >= period_start, UsageRecord.created_at < period_end).all()
+        input_series = [0] * bucket_count
+        output_series = [0] * bucket_count
+        cache_write_series = [0] * bucket_count
+        cache_read_series = [0] * bucket_count
+        revenue_series = [0.0] * bucket_count
+        supplier_cost_series = [0.0] * bucket_count
+        price_map = {row.model: row for row in db.query(ProviderPrice).filter(ProviderPrice.is_current == 1).all()}
+        model_to_group = {row.model: row.group_name for row in db.query(CustomerPrice).filter(CustomerPrice.is_current == 1).all()}
+        group_names = []
+        group_series = {}
+        for record in records:
+            if record.created_at is None:
+                continue
+            item_time = record.created_at
+            if item_time.tzinfo is None:
+                item_time = item_time.replace(tzinfo=dt_timezone.utc)
+            local_time = item_time.astimezone(tz)
+            offset = int((local_time - period_start).total_seconds() // bucket_seconds)
+            if offset < 0 or offset >= bucket_count:
+                continue
+            input_tokens = record.input_tokens or 0
+            output_tokens = record.output_tokens or 0
+            cache_write_tokens = record.cache_write_tokens or 0
+            cache_read_tokens = record.cache_read_tokens or 0
+            input_series[offset] += input_tokens
+            output_series[offset] += output_tokens
+            cache_write_series[offset] += cache_write_tokens
+            cache_read_series[offset] += cache_read_tokens
+            revenue_series[offset] += float(record.cost or 0)
+            price = price_map.get(record.model)
+            if price:
+                cost = (
+                    Decimal(str(input_tokens)) * price.input_cost_per_token
+                    + Decimal(str(output_tokens)) * price.output_cost_per_token
+                    + Decimal(str(cache_write_tokens)) * price.cache_write_cost_per_token
+                    + Decimal(str(cache_read_tokens)) * price.cache_read_cost_per_token
+                ) / Decimal("1000000")
+                supplier_cost_series[offset] += float(cost)
+            group_name = model_to_group.get(record.model) or "未分组"
+            if group_name not in group_series:
+                group_names.append(group_name)
+                group_series[group_name] = [0] * bucket_count
+            group_series[group_name][offset] += input_tokens + output_tokens + cache_write_tokens + cache_read_tokens
+        ledger_rows = db.query(WalletLedger).join(User, User.id == WalletLedger.user_id).filter(WalletLedger.created_at >= period_start, WalletLedger.created_at < period_end, User.status != "admin").order_by(WalletLedger.created_at).all()
+        current_customer_wallet, _admin_wallet, _customer_usage = _wallet_summary(db)
+        period_ledger_amount = sum(float(row.amount or 0) for row in ledger_rows)
+        opening_balance = float(current_customer_wallet) - period_ledger_amount
+        wallet_series = [0.0] * bucket_count
+        carry = float(opening_balance)
+        for ledger in ledger_rows:
+            if ledger.created_at is None:
+                continue
+            item_time = ledger.created_at
+            if item_time.tzinfo is None:
+                item_time = item_time.replace(tzinfo=dt_timezone.utc)
+            local_time = item_time.astimezone(tz)
+            offset = int((local_time - period_start).total_seconds() // bucket_seconds)
+            if offset < 0 or offset >= bucket_count:
+                continue
+            # For simplicity, each bucket shows cumulative balance at that point in the period.
+            wallet_series[offset] = carry + float(ledger.amount or 0)
+            carry += float(ledger.amount or 0)
+        profit_series = [float(revenue_series[i]) - float(supplier_cost_series[i]) for i in range(bucket_count)]
+        return {
+            "range": range,
+            "buckets": labels,
+            "usage": {
+                "input": input_series,
+                "output": output_series,
+                "cache_write": cache_write_series,
+                "cache_read": cache_read_series,
+            },
+            "revenue": revenue_series,
+            "supplier_cost": supplier_cost_series,
+            "profit": profit_series,
+            "wallet_balance": wallet_series,
+            "groups": [
+                {"name": name, "series": group_series[name]}
+                for name in group_names
+            ],
+        }
+    finally:
+        db.close()
+
+@router.get("/analytics/overview")
+async def get_analytics_overview(admin: User = Depends(require_admin)):
+    from datetime import timedelta, timezone as dt_timezone
+    from decimal import Decimal
+    from sqlalchemy import func
+
+    db = SessionLocal()
+    try:
+        tz = dt_timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+        if now.month == 12:
+            year_end = datetime(now.year + 1, 1, 1, tzinfo=tz)
+        else:
+            year_end = datetime(now.year + 1, 1, 1, tzinfo=tz)
+        year_start = datetime(now.year, 1, 1, tzinfo=tz)
+        period_start = year_start
+        period_end = year_end
+        records = db.query(UsageRecord).filter(UsageRecord.created_at >= period_start, UsageRecord.created_at < period_end).all()
+        price_map = {
+            row.model: row
+            for row in db.query(ProviderPrice).filter(ProviderPrice.is_current == 1).all()
+        }
+        total_input = sum((item.input_tokens or 0) for item in records)
+        total_output = sum((item.output_tokens or 0) for item in records)
+        total_cache_write = sum((item.cache_write_tokens or 0) for item in records)
+        total_cache_read = sum((item.cache_read_tokens or 0) for item in records)
+        revenue = sum((item.cost or 0) for item in records)
+        supplier_cost_cny = Decimal("0")
+        group_usage = {}
+        for item in records:
+            price = price_map.get(item.model)
+            if price:
+                supplier_cost_cny += (
+                    Decimal(str(item.input_tokens or 0)) * price.input_cost_per_token
+                    + Decimal(str(item.output_tokens or 0)) * price.output_cost_per_token
+                    + Decimal(str(item.cache_write_tokens or 0)) * price.cache_write_cost_per_token
+                    + Decimal(str(item.cache_read_tokens or 0)) * price.cache_read_cost_per_token
+                ) / Decimal("1000000")
+        model_to_group = {
+            row.model: row.group_name
+            for row in db.query(CustomerPrice).filter(CustomerPrice.is_current == 1).all()
+        }
+        for item in records:
+            group_name = model_to_group.get(item.model) or "未分组"
+            group_usage[group_name] = group_usage.get(group_name, 0) + (item.input_tokens or 0) + (item.output_tokens or 0) + (item.cache_read_tokens or 0) + (item.cache_write_tokens or 0)
+        customer_wallet, admin_wallet, customer_usage = _wallet_summary(db)
+        return {
+            "total_input": int(total_input),
+            "total_output": int(total_output),
+            "total_cache_write": int(total_cache_write),
+            "total_cache_read": int(total_cache_read),
+            "revenue": float(revenue),
+            "supplier_cost_cny": float(supplier_cost_cny),
+            "group_usage": [
+                {"name": key, "tokens": value, "share": float(value) / float(total_input + total_output + total_cache_read + total_cache_write) * 100 if (total_input + total_output + total_cache_read + total_cache_write) else 0}
+                for key, value in group_usage.items()
+            ],
+            "customer_wallet_balance": float(customer_wallet),
+            "customer_usage": float(customer_usage),
+        }
+    finally:
+        db.close()
+
 @router.get("/finance")
 async def get_finance(admin: User = Depends(require_admin)):
     db = SessionLocal()
@@ -673,7 +878,7 @@ async def get_finance(admin: User = Depends(require_admin)):
         total_wallet = sum(w[0] for w in wallet_rows) if wallet_rows else 0
         reserved_rows = db.query(Wallet).with_entities(Wallet.reserved_balance).all()
         total_reserved = sum(w[0] for w in reserved_rows) if reserved_rows else 0
-        customer_wallet, admin_wallet = _customer_wallet_summary(db)
+        customer_wallet, admin_wallet, _unused_usage = _wallet_summary(db)
         return {
             "total_topups": float(topups or 0),
             "total_usage_billed": float(usage_total or 0),
