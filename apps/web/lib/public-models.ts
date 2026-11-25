@@ -6,6 +6,7 @@ export interface PublicModelCacheItem {
   cache_read_sell: number;
   official?: [number, number, number, number] | null;
   peak_multiplier?: number;
+  hourly_multipliers?: number[];
 }
 
 export interface PublicModelCacheGroup {

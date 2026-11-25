@@ -19,7 +19,7 @@ from auth import hash_password, verify_password, create_jwt, decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE, get_model_price
 from plans import Plan, Entitlement, PlanService
-from pricing import CustomerPrice, ModelGroup, ProviderPrice, Supplier, SupplierRoute
+from pricing import CustomerPrice, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, parse_hourly_multipliers
 from admin import router as admin_router
 from rate_limit import RATE_LIMITER
 from supplier import get_supplier_route, upstream_request, normalize_anthropic_response
@@ -270,6 +270,7 @@ async def public_models():
     try:
         groups = db.query(ModelGroup).order_by(ModelGroup.sort_order, ModelGroup.id).all()
         prices = db.query(CustomerPrice).filter(CustomerPrice.is_current == 1, CustomerPrice.group_name.isnot(None)).order_by(CustomerPrice.model).all()
+        multipliers = {item.model: parse_hourly_multipliers(item.hourly_multipliers) for item in db.query(ModelMultiplier).all()}
         grouped = {group.name: [] for group in groups}
         for price in prices:
             if price.group_name not in grouped:
@@ -283,6 +284,7 @@ async def public_models():
                 "official": ([round(value * 0.62, 2) for value in OFFICIAL_PRICE_SEED[price.model]]
                              if price.model in OFFICIAL_PRICE_SEED else None),
                 "peak_multiplier": PEAK_MULTIPLIER_SEED.get(price.model, 1.0),
+                "hourly_multipliers": multipliers.get(price.model, parse_hourly_multipliers(None)),
             })
         return [{"group_name": group.name, "models": grouped[group.name]} for group in groups]
     finally:
@@ -290,18 +292,19 @@ async def public_models():
 
 @app.get("/public/model-multiplier-history/{model}")
 async def model_multiplier_history(model: str):
-    base = PEAK_MULTIPLIER_SEED.get(model, 1.0)
-    points = []
-    day_names = ["1D", "1W"]
-    spans = {"1D": 24, "1W": 7}
-    for label in day_names:
-        n = spans[label]
-        series = []
-        for i in range(n):
-            hour_factor = 1.0 + 0.12 * ((i * 37) % 5) / 4
-            series.append(round(base * hour_factor, 2))
-        points.append({"label": label, "series": series})
-    return {"model": model, "ranges": points}
+    db = SessionLocal()
+    try:
+        row = db.query(ModelMultiplier).filter(ModelMultiplier.model == model).first()
+        series = parse_hourly_multipliers(row.hourly_multipliers if row else None)
+        hours = [f"{hour:02d}:00" for hour in range(24)]
+        return {
+            "model": model,
+            "ranges": [{"label": "1D", "series": series}],
+            "hours": hours,
+            "current_multiplier": series[datetime.now(timezone(timedelta(hours=8))).hour],
+        }
+    finally:
+        db.close()
 
 @app.on_event("startup")
 async def startup():
@@ -552,7 +555,7 @@ async def get_usage(user: User = Depends(get_current_user)):
         db.close()
 
 @app.get("/me/dashboard")
-async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
+async def get_dashboard(user: User = Depends(get_current_user), days: int = 7, granularity: str = "day"):
     range_days = min(max(days, 1), 90)
     sgt = timezone(timedelta(hours=8))
     now = datetime.now(sgt)
@@ -591,14 +594,24 @@ async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
             })
         model_distribution.sort(key=lambda item: item["tokens"], reverse=True)
 
-        buckets: dict[str, list[UsageRecord]] = {}
-        for offset in range(range_days):
-            bucket_date = (now - timedelta(days=range_days - 1 - offset)).date().isoformat()
-            buckets[bucket_date] = []
-        for record in range_records:
-            bucket_date = record.created_at.astimezone(sgt).date().isoformat()
-            if bucket_date in buckets:
-                buckets[bucket_date].append(record)
+        if granularity == "hour" and range_days == 1:
+            buckets: dict[str, list[UsageRecord]] = {}
+            for hour in range(24):
+                bucket_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                buckets[bucket_time.isoformat()] = []
+            for record in range_records:
+                bucket_time = record.created_at.astimezone(sgt).replace(minute=0, second=0, microsecond=0)
+                if bucket_time.isoformat() in buckets:
+                    buckets[bucket_time.isoformat()].append(record)
+        else:
+            buckets: dict[str, list[UsageRecord]] = {}
+            for offset in range(range_days):
+                bucket_date = (now - timedelta(days=range_days - 1 - offset)).date().isoformat()
+                buckets[bucket_date] = []
+            for record in range_records:
+                bucket_date = record.created_at.astimezone(sgt).date().isoformat()
+                if bucket_date in buckets:
+                    buckets[bucket_date].append(record)
         trend = []
         for bucket_date, records in buckets.items():
             trend.append({
@@ -622,6 +635,7 @@ async def get_dashboard(user: User = Depends(get_current_user), days: int = 7):
             "total_api_keys": db.query(APIKey).filter(APIKey.user_id == user.id).count(),
             "model_distribution": model_distribution,
             "trend": trend,
+            "granularity": "hour" if granularity == "hour" and range_days == 1 else "day",
             "recent_usage": [{
                 "id": record.id,
                 "model": record.model,

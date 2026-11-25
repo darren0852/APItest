@@ -13,6 +13,7 @@ interface PricingGroup { id: number; name: string; model_count: number; key_coun
 interface SupplierRoute { id: number; model_name: string; upstream_model: string; endpoint_url: string; api_key_last4: string; }
 interface LedgerEntry { id: number; user_id: number; type: string; amount: number; balance_after: number; reference: string; created_at: string; }
 interface AuditEntry { id: number; admin: string; action: string; target_type: string | null; target_id: string | null; detail: string | null; created_at: string; }
+interface HourlyMultiplierRow { model: string; hourly_multipliers: number[]; }
 
 const API = "https://api.vemixapp.com";
 
@@ -30,6 +31,8 @@ export default function AdminPage() {
   const [showModelModal, setShowModelModal] = useState(false);
   const [deletePrice, setDeletePrice] = useState<PriceRow | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<PricingGroup | null>(null);
+  const [editMultiplier, setEditMultiplier] = useState<HourlyMultiplierRow | null>(null);
+  const [multipliers, setMultipliers] = useState<HourlyMultiplierRow[]>([]);
   const [supplierRoutes, setSupplierRoutes] = useState<SupplierRoute[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -75,6 +78,7 @@ export default function AdminPage() {
     const usersData = await get("users"); if (usersData) setUsers(usersData);
     const priceData = await get("pricing"); if (priceData) setPrices(priceData);
     const groupData = await get("pricing-groups"); if (groupData) setGroups(groupData);
+    const multiplierData = await get("model-multipliers"); if (multiplierData) setMultipliers(multiplierData);
     const routeData = await get("supplier-routes"); if (routeData) setSupplierRoutes(routeData);
     const ledgerData = await get("ledger"); if (ledgerData) setLedger(ledgerData);
     const auditData = await get("audit"); if (auditData) setAudit(auditData);
@@ -190,6 +194,20 @@ export default function AdminPage() {
   const openDetail = async (userId: number) => {
     const result = await get(`users/${userId}`);
     if (result) { setDetail(result); setTab("detail"); }
+  };
+
+  const openMultiplier = async (model: string) => {
+    const row = (await get("model-multipliers") as HourlyMultiplierRow[] | null)?.find((item) => item.model === model);
+    if (row) setEditMultiplier(row);
+  };
+
+  const saveMultiplier = async () => {
+    if (!editMultiplier) return;
+    await post("model-multipliers", editMultiplier, async () => {
+      setEditMultiplier(null);
+      const refreshed = await get("model-multipliers");
+      if (refreshed) setMultipliers(refreshed);
+    });
   };
 
   const tabs = [
@@ -336,7 +354,7 @@ export default function AdminPage() {
                     <td><strong>RM {(price.cache_write_sell ?? 0).toFixed(2)}</strong></td>
                     <td><strong>RM {(price.cache_read_sell ?? 0).toFixed(2)}</strong></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="button button-ghost" onClick={() => setEditPrice({ ...price, group_name: price.group_name || "", input_sell: price.input_sell ?? 0, output_sell: price.output_sell ?? 0, cache_write_sell: price.cache_write_sell ?? 0, cache_read_sell: price.cache_read_sell ?? 0 })}>编辑</button> <button className="button button-danger" onClick={() => setDeletePrice(price)}>删除</button>
+                      <button className="button button-ghost" onClick={() => setEditPrice({ ...price, group_name: price.group_name || "", input_sell: price.input_sell ?? 0, output_sell: price.output_sell ?? 0, cache_write_sell: price.cache_write_sell ?? 0, cache_read_sell: price.cache_read_sell ?? 0 })}>编辑</button> <button className="button button-secondary" onClick={() => openMultiplier(price.model)}>峰谷倍数</button> <button className="button button-danger" onClick={() => setDeletePrice(price)}>删除</button>
                     </td>
                   </tr>
                 ))}
@@ -517,6 +535,40 @@ export default function AdminPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
               <button className="button button-secondary" onClick={() => setDeletePrice(null)}>取消</button>
               <button className="button button-danger" onClick={async () => { await remove(`pricing/${encodeURIComponent(deletePrice.model)}`, loadAll); setDeletePrice(null); }}>确认删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {editMultiplier && (
+        <div className="modal-overlay" onClick={() => setEditMultiplier(null)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="card-title">
+              <strong>峰谷倍数 · {editMultiplier.model}</strong>
+              <button className="button button-ghost" onClick={() => setEditMultiplier(null)}>×</button>
+            </div>
+            <div className="stat-mini" style={{ marginBottom: 15 }}>这里是真实计费曲线，所有请求会按当前小时倍数计算。</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {(editMultiplier.hourly_multipliers || []).map((value, hour) => (
+                <div key={hour}>
+                  <label className="label">{String(hour).padStart(2, "0")}:00</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={value}
+                    onChange={(event) => {
+                      const next = [...(editMultiplier.hourly_multipliers || [])];
+                      next[hour] = Number(event.target.value || 0);
+                      setEditMultiplier({ ...editMultiplier, hourly_multipliers: next });
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button className="button button-secondary" onClick={() => setEditMultiplier(null)}>取消</button>
+              <button className="button button-primary" onClick={saveMultiplier}>保存曲线</button>
             </div>
           </div>
         </div>

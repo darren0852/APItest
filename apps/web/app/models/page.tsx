@@ -67,24 +67,23 @@ function formatRM(value: number | undefined, fallback = "—") {
   return `RM ${(Number(value) || 0).toFixed(2)}`;
 }
 
-function SparkLine({ multiplier }: { multiplier: number }) {
-  const points = Array.from({ length: 24 }, (_, i) => {
-    const wave = Math.sin((i / 24) * Math.PI * 2) * 0.06;
-    return multiplier + wave + ((i * 13) % 7) * 0.004;
-  });
+function SparkLine({ series }: { series: number[] }) {
+  const points = series.length === 24 ? series : Array.from({ length: 24 }, () => 1);
   const min = Math.min(...points);
   const max = Math.max(...points);
   const range = max - min || 1;
   const coords = points.map((value, index) => `${(index / 23) * 72},${26 - ((value - min) / range) * 20}`).join(" ");
   return (
     <svg width="72" height="28" className="sparkline">
-      <polyline points={coords} fill="none" stroke="#B7B89F" strokeWidth="1.5" />
+      <polyline points={coords} fill="none" stroke="var(--accent-2)" strokeWidth="1.5" />
     </svg>
   );
 }
 
 interface DetailData {
   ranges: { label: string; series: number[] }[];
+  hours: string[];
+  current_multiplier: number;
 }
 
 function MultiplierModal({ model, onClose }: { model: string; onClose: () => void }) {
@@ -112,7 +111,7 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
         <div className="modal-head">
           <div>
             <h3 className="section-title">{model}</h3>
-            <span className="stat-mini">高峰/低峰倍数走势</span>
+            <span className="stat-mini">真实计费倍数 · 当前 {data?.current_multiplier?.toFixed(2) ?? "—"}×</span>
           </div>
           <button className="btn btn-ghost" onClick={onClose}>关闭</button>
         </div>
@@ -123,10 +122,29 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
         </div>
         {series.length > 0 ? (
           <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="multiplier-chart">
-            <polyline points={coords} fill="none" stroke="#777C6D" strokeWidth="2" />
+            <polyline points={coords} fill="none" stroke="var(--accent-2)" strokeWidth="2" />
           </svg>
         ) : (
           <div className="empty">加载中…</div>
+        )}
+        {series.length === 24 && data && (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead><tr><th>时间</th><th className="num">计费倍数</th><th>时间</th><th className="num">计费倍数</th></tr></thead>
+              <tbody>
+                {Array.from({ length: 12 }, (_, index) => {
+                  const first = index * 2;
+                  const second = first + 1;
+                  return (
+                    <tr key={index}>
+                      <td>{data.hours[first]}</td><td className="num">{series[first].toFixed(2)}×</td>
+                      <td>{data.hours[second]}</td><td className="num">{series[second].toFixed(2)}×</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         <div className="legend-row">
           <span className="stat-mini">当前倍数区间 {min.toFixed(2)}× – {max.toFixed(2)}×（平峰 = 1.00×）</span>
@@ -139,7 +157,6 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
 export default function ModelsPage() {
   const [data, setData] = useState<PublicGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
-  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [detailModel, setDetailModel] = useState("");
@@ -174,8 +191,8 @@ export default function ModelsPage() {
 
   const rows = useMemo(() => {
     const models = data.find((group) => group.group_name === selectedGroup)?.models || [];
-    return [...models].sort((a, b) => a.model.localeCompare(b.model)).filter((model) => !search || model.model.toLowerCase().includes(search.toLowerCase()));
-  }, [data, selectedGroup, search]);
+    return [...models].sort((a, b) => a.model.localeCompare(b.model));
+  }, [data, selectedGroup]);
 
   if (error) {
     return <AppShell active="/models" title="模型广场" subtitle="供应商模型">
@@ -196,7 +213,7 @@ export default function ModelsPage() {
           <button
             key={group.group_name}
             className={`chip${selectedGroup === group.group_name ? " active" : ""}`}
-            onClick={() => { setSelectedGroup(group.group_name); setSearch(""); }}
+            onClick={() => setSelectedGroup(group.group_name)}
           >
             {group.group_name} · {group.models.length}
           </button>
@@ -208,13 +225,6 @@ export default function ModelsPage() {
           <h2 className="section-title">{selectedGroup || "未选择分组"}</h2>
           <span className="stat-mini">{rows.length} 个模型</span>
         </div>
-
-        <input
-          className="input"
-          placeholder="搜索模型 ID…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
 
         <div className="table-wrap" style={{ marginTop: 14 }}>
           <table className="model-table">
@@ -246,7 +256,7 @@ export default function ModelsPage() {
                       </div>
                     </div>
                   </td>
-                  <td><SparkLine multiplier={row.peak_multiplier || 1} /></td>
+                  <td><SparkLine series={row.hourly_multipliers || []} /></td>
                   <td className="num">
                     <div className="price-stack">
                       <span className="model-price">{formatRM(row.input_sell)}</span>

@@ -2,6 +2,7 @@
 from database import Base
 from sqlalchemy import Column, ForeignKey, Integer, String, Numeric, DateTime, Text
 from datetime import datetime, timezone
+import json
 
 class ProviderPrice(Base):
     """Upstream cost price per model, versioned."""
@@ -43,6 +44,31 @@ class ModelGroup(Base):
     name = Column(String, unique=True, nullable=False, index=True)
     sort_order = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class ModelMultiplier(Base):
+    """Admin-controlled real billing multiplier curve for all model charges."""
+    __tablename__ = "model_multipliers"
+    id = Column(Integer, primary_key=True, index=True)
+    model = Column(String, unique=True, nullable=False, index=True)
+    hourly_multipliers = Column(Text, nullable=False)
+    version = Column(Integer, default=1)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+DEFAULT_HOURLY_MULTIPLIERS = [
+    1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
+    1.05, 1.10, 1.15, 1.18, 1.20, 1.22,
+    1.25, 1.22, 1.18, 1.20, 1.22, 1.25,
+    1.28, 1.32, 1.28, 1.22, 1.15, 1.08,
+]
+
+def parse_hourly_multipliers(raw: str | None) -> list[float]:
+    try:
+        result = [float(item) for item in json.loads(raw or "[]")]
+    except Exception:
+        result = []
+    if len(result) != 24:
+        result = DEFAULT_HOURLY_MULTIPLIERS[:]
+    return [round(value, 4) for value in result]
 
 class Provider(Base):
     """Upstream model provider registry."""

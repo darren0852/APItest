@@ -7,7 +7,7 @@ import AppShell from "../components/AppShell";
 
 interface UsageSummary { requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost: number; }
 interface ModelDistributionItem { model: string; requests: number; tokens: number; cost: number; }
-interface TrendItem { date: string; requests: number; input_tokens: number; output_tokens: number; cost: number; }
+interface TrendItem { date: string; requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost: number; }
 interface RecentUsageItem { id: number; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; tokens: number; cost: number; created_at: string; }
 interface DashboardData {
   range_days: number;
@@ -35,7 +35,7 @@ function formatTokens(value: number) {
 export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [range, setRange] = useState(7);
+  const [range, setRange] = useState<"today" | "week" | "month">("today");
   const [refreshToken, setRefreshToken] = useState(0);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -53,7 +53,9 @@ export default function DashboardPage() {
     setEmail(localStorage.getItem("email") || "用户");
     setLoading(true);
     setError("");
-    fetch(`${API}/me/dashboard?days=${range}`, { headers: { Authorization: `Bearer ${token}` } })
+    const days = range === "today" ? 1 : range === "week" ? 7 : 30;
+    const granularity = range === "today" ? "hour" : "day";
+    fetch(`${API}/me/dashboard?days=${days}&granularity=${granularity}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
         if (response.status === 401) { router.push("/login"); return; }
         if (!response.ok) { setError("无法加载仪表盘数据"); return; }
@@ -91,15 +93,16 @@ export default function DashboardPage() {
       date: item.date,
       input: item.input_tokens,
       output: item.output_tokens,
-      max: Math.max(item.input_tokens, item.output_tokens),
+      cacheWrite: item.cache_write_tokens,
+      cacheRead: item.cache_read_tokens,
     }));
-    const max = Math.max(...points.map((point) => point.max), 1);
+    const max = Math.max(...points.flatMap((point) => [point.input, point.output, point.cacheWrite, point.cacheRead]), 1);
     const width = 720;
     const height = 220;
-    const x = (index: number) => 40 + (points.length <= 1 ? 0 : (index * (width - 80)) / (points.length - 1));
+    const x = (index: number) => 42 + (points.length <= 1 ? 0 : (index * (width - 84)) / (points.length - 1));
     const y = (value: number) => height - 28 - (value / max) * (height - 56);
-    const toPath = (key: "input" | "output") => points.map((point, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(" ");
-    return { width, height, max, x, y, inputPath: toPath("input"), outputPath: toPath("output"), points };
+    const toPath = (key: "input" | "output" | "cacheWrite" | "cacheRead") => points.map((point, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(" ");
+    return { width, height, max, x, y, points, paths: { input: toPath("input"), output: toPath("output"), cacheWrite: toPath("cacheWrite"), cacheRead: toPath("cacheRead") } };
   }, [dashboard]);
 
   const statCard = (label: string, value: string, sub: string) => (
@@ -119,10 +122,10 @@ export default function DashboardPage() {
             <Link className="button button-primary" style={{ marginTop: 16 }} href="/models">去模型广场选择 →</Link>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <select className="select" value={range} onChange={(event) => setRange(Number(event.target.value))}>
-              <option value={7}>近 7 天</option>
-              <option value={30}>近 30 天</option>
-              <option value={90}>近 90 天</option>
+            <select className="select" value={range} onChange={(event) => setRange(event.target.value as "today" | "week" | "month")}>
+              <option value="today">今天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
             </select>
             <button className="button button-secondary" onClick={() => setRefreshToken((value) => value + 1)}>刷新</button>
           </div>
@@ -139,8 +142,8 @@ export default function DashboardPage() {
       <div className="grid grid-4" style={{ marginBottom: 20 }}>
         {statCard("今日 Token", formatTokens(todayTokens), `输入 ${formatTokens(dashboard?.today.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.today.output_tokens ?? 0)} · 缓存 ${formatTokens((dashboard?.today.cache_read_tokens ?? 0) + (dashboard?.today.cache_write_tokens ?? 0))}`)}
         {statCard("累计 Token", formatTokens(totalTokens), `输入 ${formatTokens(dashboard?.total.input_tokens ?? 0)} · 输出 ${formatTokens(dashboard?.total.output_tokens ?? 0)} · 缓存 ${formatTokens((dashboard?.total.cache_read_tokens ?? 0) + (dashboard?.total.cache_write_tokens ?? 0))}`)}
-        {statCard("范围请求", String(dashboard?.range.requests ?? 0), `${range} 天真实数据`)}
-        {statCard("范围消费", `${currency} ${(dashboard?.range.cost ?? 0).toFixed(2)}`, `${range} 天统计`)}
+        {statCard("范围请求", String(dashboard?.range.requests ?? 0), range === "today" ? "今天真实数据" : range === "week" ? "本周真实数据" : "本月真实数据")}
+        {statCard("范围消费", `${currency} ${(dashboard?.range.cost ?? 0).toFixed(2)}`, range === "today" ? "今天统计" : range === "week" ? "本周统计" : "本月统计")}
       </div>
 
       <div className="grid grid-2" style={{ marginBottom: 20 }}>
@@ -178,13 +181,45 @@ export default function DashboardPage() {
         </div>
 
         <div className="card">
-          <div className="card-title"><h2 className="section-title">Token 使用趋势</h2><span className="stat-mini">{range} 天</span></div>
-          {chart && dashboard && dashboard.trend.some((item) => item.input_tokens + item.output_tokens > 0) ? (
-            <svg viewBox={`0 0 ${chart.width} ${chart.height}`} width="100%" height="240">
-              <path d={chart.inputPath} fill="none" stroke="#f6b756" strokeWidth="3" strokeLinecap="round" />
-              <path d={chart.outputPath} fill="none" stroke="#5fd0a6" strokeWidth="3" strokeLinecap="round" />
-              <text x={42} y={22} fill="var(--muted)" fontSize="11">输入 / 输出 Token</text>
-              <text x={chart.width - 88} y={22} fill="var(--muted)" fontSize="11">峰值 {formatTokens(chart.max)}</text>
+          <div className="card-title" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <h2 className="section-title" style={{ margin: 0 }}>Token 使用趋势</h2>
+              <span className="stat-mini">{range === "today" ? "今天" : range === "week" ? "本周" : "本月"}</span>
+            </div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              {[
+                ["输入", "#6b7d5a", chart?.paths.input],
+                ["输出", "#4a9d8b", chart?.paths.output],
+                ["缓存创建", "#b08968", chart?.paths.cacheWrite],
+                ["缓存读取", "#82956f", chart?.paths.cacheRead],
+              ].map(([label, color, path]) => (
+                <span key={label as string} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7367" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 99, background: color as string, display: "inline-block" }} />
+                  {label as string}
+                </span>
+              ))}
+            </div>
+          </div>
+          {chart && dashboard && chart.points.some((point) => point.input + point.output + point.cacheWrite + point.cacheRead > 0) ? (
+            <svg viewBox={`0 0 ${chart.width} ${chart.height}`} width="100%" height="260">
+              {chart.points.some((point) => point.input + point.output + point.cacheWrite + point.cacheRead > 0) && (
+                <>
+                  <path d={chart.paths.input} fill="none" stroke="#6b7d5a" strokeWidth="3" strokeLinecap="round" />
+                  <path d={chart.paths.output} fill="none" stroke="#4a9d8b" strokeWidth="3" strokeLinecap="round" />
+                  <path d={chart.paths.cacheWrite} fill="none" stroke="#b08968" strokeWidth="3" strokeLinecap="round" />
+                  <path d={chart.paths.cacheRead} fill="none" stroke="#82956f" strokeWidth="3" strokeLinecap="round" />
+                </>
+              )}
+              {chart.points.map((point, index) => {
+                const label = range === "today" ? point.date.slice(11, 16) : point.date;
+                return <text key={point.date} x={chart.x(index)} y={chart.height - 8} fill="#9ba39a" fontSize={9} textAnchor="middle">{label}</text>;
+              })}
+              {[0, .25, .5, .75, 1].map((ratio) => (
+                <g key={ratio}>
+                  <line x1={42} x2={chart.width - 42} y1={chart.y(chart.max * ratio)} y2={chart.y(chart.max * ratio)} stroke="rgba(0,0,0,0.06)" strokeDasharray="3 5" />
+                  <text x={8} y={chart.y(chart.max * ratio) + 3} fill="#9ba39a" fontSize={10} textAnchor="start">{formatTokens(chart.max * ratio)}</text>
+                </g>
+              ))}
             </svg>
           ) : <div className="empty">所选时间范围内没有趋势数据。</div>}
         </div>

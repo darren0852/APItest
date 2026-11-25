@@ -29,7 +29,7 @@ export default function Login() {
       });
       const data = await response.json();
       if (!response.ok) {
-        setError(data.detail || "Login failed");
+        setError(data.detail || "登录失败");
         return;
       }
       localStorage.setItem("token", data.token);
@@ -37,7 +37,7 @@ export default function Login() {
       void prefetchPublicModels().catch(() => undefined);
       router.push(data.is_admin ? "/admin" : "/dashboard");
     } catch {
-      setError("Cannot connect to server");
+      setError("无法连接服务器");
     } finally {
       setLoading(false);
     }
@@ -50,26 +50,27 @@ export default function Login() {
           <div className="brand-mark">AI</div>
           <div>
             <div className="brand-title">Nova API</div>
-            <div className="brand-sub">AI API 中转站</div>
+            <div className="brand-sub">AI Gateway</div>
           </div>
         </Link>
         <div>
-          <div className="badge badge-info">兼容 OpenAI · 兼容 Anthropic</div>
-          <h1 className="auth-title">一个中转站，承载所有 AI 工作负载</h1>
-          <p className="auth-desc">
-            追踪钱包余额、管理客户 API Key、监控 Token 用量、对比模型分组，并保持生产流量可控。
-          </p>
+          <span className="badge badge-info">OpenAI · Anthropic · Responses 兼容</span>
         </div>
-        <div className="grid grid-2">
-          <div className="card">
-            <div className="metric-label">调用端点</div>
-            <div className="mono" style={{ marginTop: 10, display: "block", overflowWrap: "anywhere" }}>
-              POST /v1/chat/completions
-            </div>
+        <h1 className="auth-title">一个中转站<br />承载所有 AI 工作负载</h1>
+        <p className="auth-desc">
+          统一网关 · 独立客户密钥 · 钱包或套餐计费 · 不可变账本 · 四大供应商分组 · 价格公开透明
+        </p>
+        <div className="grid grid-2" style={{ maxWidth: 420, position: "relative" }}>
+          <div className="card" style={{ padding: 16 }}>
+            <div className="stat-label">调用端点</div>
+            <div className="mono" style={{ marginTop: 8, color: "var(--accent-2)", fontSize: 11.5 }}>POST /v1/chat/completions</div>
+            <div className="mono" style={{ color: "var(--cyan)", fontSize: 11.5 }}>POST /v1/messages</div>
+            <div className="mono" style={{ color: "var(--accent-2)", fontSize: 11.5 }}>POST /v1/responses</div>
           </div>
-          <div className="card">
-            <div className="metric-label">计价货币</div>
-            <div className="metric-value">RM</div>
+          <div className="card" style={{ padding: 16 }}>
+            <div className="stat-label">计价货币</div>
+            <div className="metric-value" style={{ fontSize: 26 }}>RM</div>
+            <div className="stat-fade" style={{ fontSize: 11 }}>马来西亚令吉</div>
           </div>
         </div>
       </section>
@@ -78,21 +79,23 @@ export default function Login() {
         <form className="auth-card" onSubmit={submit}>
           <h2 className="auth-card-title">欢迎回来</h2>
           <p className="auth-card-sub">登录后管理密钥、钱包和模型访问。</p>
-          <div style={{ marginBottom: 16 }}>
-            <label className="label" htmlFor="email">邮箱</label>
-            <input id="email" className="input" type="email" value={email} placeholder="you@company.com" required onChange={(event) => setEmail(event.target.value)} />
-          </div>
-          <div style={{ marginBottom: 18 }}>
-            <label className="label" htmlFor="password">密码</label>
-            <input id="password" className="input" type="password" value={password} placeholder="Enter password" required onChange={(event) => setPassword(event.target.value)} />
-          </div>
-          {error && <div className="notice notice-danger" style={{ marginBottom: 15 }}>{error}</div>}
-          <button className="button button-primary" style={{ width: "100%", minHeight: 42 }} disabled={loading} type="submit">
-            {loading ? "登录中…" : "登录"}
+          {error && <div className="notice notice-danger" style={{ marginBottom: 16 }}>{error}</div>}
+          <label className="label">邮箱</label>
+          <input
+            className="input" type="email" value={email} placeholder="you@example.com" required
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <label className="label" style={{ marginTop: 16 }}>密码</label>
+          <input
+            className="input" type="password" value={password} placeholder="••••••••" required
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button className="button button-primary" style={{ width: "100%", marginTop: 22 }} type="submit" disabled={loading}>
+            {loading ? "登录中…" : "进入控制台"}
           </button>
-          <div style={{ marginTop: 18, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-            还没有账号？<Link href="/register" style={{ color: "#bed7ff" }}>立即注册</Link>
-          </div>
+          <p className="stat-mini" style={{ marginTop: 18, textAlign: "center" }}>
+            还没有账号？ <Link href="/register" style={{ color: "var(--accent-2)" }}>立即注册 →</Link>
+          </p>
         </form>
       </section>
     </main>

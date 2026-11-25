@@ -1,40 +1,59 @@
 import Link from "next/link";
 import AppShell from "./components/AppShell";
 
+const endpoints = [
+  { method: "POST", path: "/v1/chat/completions", label: "OpenAI 兼容", color: "var(--accent-2)" },
+  { method: "POST", path: "/v1/messages", label: "Anthropic 兼容", color: "var(--cyan)" },
+  { method: "POST", path: "/v1/responses", label: "OpenAI Responses", color: "var(--accent-2)" },
+];
+
+const features = [
+  { title: "四大供应商分组", desc: "Zhipu GLM · Kimi · MiniMax · DeepSeek，价格公开透明。" },
+  { title: "多协议统一网关", desc: "OpenAI Chat Completions、Anthropic Messages、OpenAI Responses 三端点全支持。" },
+  { title: "缓存感知计费", desc: "缓存读取 / 创建 / 普通输入 / 输出分单价精确计费，不会重复扣。" },
+  { title: "余额 + 套餐双轨制", desc: "先预留，请求完成后按实际 Token 结算，账本不可篡改。" },
+  { title: "客户 Key 独立管理", desc: "限额、速率、分组、过期时间全部可控。" },
+  { title: "供应商路由切换", desc: "改上游模型 ID 或 Key 即刻换供应商，客户计费不变。" },
+];
+
 export default function Home() {
   return (
-    <AppShell active="/" title="Nova API 中转站" subtitle="统一模型接入，透明计费和完整用量控制">
-      <div className="grid grid-2">
+    <AppShell active="/" title="Nova API" subtitle="统一 AI 模型网关 · 四大供应商 · 多协议兼容">
+      <div className="grid grid-2" style={{ marginBottom: 16 }}>
         <div className="card">
-          <div className="badge badge-info">OpenAI · Anthropic · Responses 兼容</div>
-          <h2 className="section-title" style={{ marginTop: 14, fontSize: 26, color: "var(--ink)" }}>把模型交付<br />能力集中到自己的网关</h2>
-          <p className="stat-mini" style={{ lineHeight: 1.8, marginTop: 12 }}>统一网关 · 独立客户密钥 · 钱包或套餐计费 · 不可变账本</p>
-          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <div style={{ marginBottom: 14 }}><span className="badge badge-info">四协议统一网关</span></div>
+          <h2 className="section-title" style={{ fontSize: 24, lineHeight: 1.35 }}>
+            把模型交付能力<br />集中到自己的中转站
+          </h2>
+          <p className="stat-mini" style={{ margin: "14px 0 18px" }}>
+            一个 Base URL 即可接入所有模型，客户用独立 API Key，按 Token 结算。
+          </p>
+          <div style={{ display: "flex", gap: 10 }}>
             <Link className="button button-primary" href="/login">开始使用</Link>
             <Link className="button button-secondary" href="/models">查看模型</Link>
           </div>
         </div>
-        <div className="card" style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div className="metric-label">Base URL</div>
-          <div className="mono" style={{ display: "block", overflowWrap: "anywhere", marginTop: 8, fontSize: 13, color: "var(--accent-2)" }}>https://api.vemixapp.com/v1/chat/completions</div>
-          <div className="mono" style={{ display: "block", overflowWrap: "anywhere", marginTop: 6, fontSize: 13, color: "var(--cyan)" }}>POST /v1/messages</div>
-          <div className="mono" style={{ display: "block", overflowWrap: "anywhere", marginTop: 6, fontSize: 13, color: "var(--accent-2)" }}>POST /v1/responses</div>
-          <div className="stat-mini" style={{ marginTop: 16 }}>使用客户 API Key 作为 Bearer Token，系统按实际 Token 用量结算。</div>
+        <div className="card" style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
+          <div className="stat-label">可用端点</div>
+          {endpoints.map((ep) => (
+            <div key={ep.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 9, background: "rgba(255,255,255,.03)", border: "1px solid var(--line)" }}>
+              <span className="badge badge-accent" style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}>{ep.method}</span>
+              <div style={{ flex: 1 }}>
+                <div className="mono" style={{ color: ep.color, fontSize: 12 }}>{ep.path}</div>
+                <div className="stat-fade" style={{ fontSize: 10.5 }}>{ep.label}</div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-      <div className="grid grid-3" style={{ marginTop: 16 }}>
-        <div className="card">
-          <h3 className="section-title">模型广场</h3>
-          <div className="stat-mini" style={{ marginTop: 8 }}>四大供应商分组，价格公开透明。</div>
-        </div>
-        <div className="card">
-          <h3 className="section-title">钱包与套餐</h3>
-          <div className="stat-mini" style={{ marginTop: 8 }}>先预留余额，请求完成后按实际 Token 结算。</div>
-        </div>
-        <div className="card">
-          <h3 className="section-title">管理控制</h3>
-          <div className="stat-mini" style={{ marginTop: 8 }}>在同一个后台管理用户、供应商、定价和供应商路由。</div>
-        </div>
+
+      <div className="grid grid-3">
+        {features.map((f) => (
+          <div className="card" key={f.title} style={{ padding: 18 }}>
+            <h3 className="section-title" style={{ fontSize: 13.5, marginBottom: 6 }}>{f.title}</h3>
+            <p className="stat-mini" style={{ lineHeight: 1.65 }}>{f.desc}</p>
+          </div>
+        ))}
       </div>
     </AppShell>
   );

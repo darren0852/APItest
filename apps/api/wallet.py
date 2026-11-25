@@ -1,8 +1,9 @@
 """Wallet service with ledger-based accounting."""
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from database import SessionLocal, Wallet, WalletLedger, UsageRecord, APIKey, User
 import uuid
+import json
 
 class WalletService:
     @staticmethod
@@ -111,14 +112,20 @@ MODEL_PRICES = {
 
 
 def get_model_price(db, model: str) -> dict:
-    from pricing import CustomerPrice
+    from pricing import CustomerPrice, ModelMultiplier, parse_hourly_multipliers
     current = db.query(CustomerPrice).filter(CustomerPrice.model == model, CustomerPrice.is_current == 1).first()
     if current:
+        multiplier_row = db.query(ModelMultiplier).filter(ModelMultiplier.model == model).first()
+        hourly_multipliers = parse_hourly_multipliers(multiplier_row.hourly_multipliers if multiplier_row else None)
+        hour = datetime.now(timezone(timedelta(hours=8))).hour
+        current_multiplier = hourly_multipliers[hour]
         return {
-            "input": Decimal(current.input_sell_per_token),
-            "output": Decimal(current.output_sell_per_token),
-            "cache_write": Decimal(current.cache_write_sell_per_token),
-            "cache_read": Decimal(current.cache_read_sell_per_token),
+            "input": Decimal(current.input_sell_per_token) * Decimal(str(current_multiplier)),
+            "output": Decimal(current.output_sell_per_token) * Decimal(str(current_multiplier)),
+            "cache_write": Decimal(current.cache_write_sell_per_token) * Decimal(str(current_multiplier)),
+            "cache_read": Decimal(current.cache_read_sell_per_token) * Decimal(str(current_multiplier)),
             "group": current.group_name,
+            "hourly_multipliers": hourly_multipliers,
+            "current_multiplier": current_multiplier,
         }
     return MODEL_PRICES.get(model)

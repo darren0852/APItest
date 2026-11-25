@@ -5,12 +5,13 @@ from pydantic import BaseModel
 from typing import Optional
 from database import SessionLocal, User, APIKey, Wallet, WalletLedger, UsageRecord
 from plans import Entitlement
-from pricing import ProviderPrice, CustomerPrice, ModelGroup, Provider, Supplier, SupplierRoute, AuditLog
+from pricing import ProviderPrice, CustomerPrice, ModelGroup, ModelMultiplier, Provider, Supplier, SupplierRoute, AuditLog, parse_hourly_multipliers
 from auth import decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE
 from supplier_crypto import encrypt_secret, secret_suffix
 from decimal import Decimal
+import json
 from datetime import datetime, timezone
 from sqlalchemy import text
 
@@ -38,6 +39,10 @@ class PriceUpdate(BaseModel):
     cache_write_sell_per_token: Optional[float] = 0
     cache_read_sell_per_token: Optional[float] = 0
     group_name: Optional[str] = None
+
+class HourlyMultipliersUpdate(BaseModel):
+    model: str
+    hourly_multipliers: list[float]
 
 class PricingGroupCreate(BaseModel):
     name: str
@@ -277,6 +282,37 @@ async def get_pricing_groups(admin: User = Depends(require_admin)):
             if key.group_name in key_counts:
                 key_counts[key.group_name] += 1
         return [{"id": group.id, "name": group.name, "sort_order": group.sort_order, "model_count": counts[group.name], "key_count": key_counts[group.name], "created_at": group.created_at.isoformat()} for group in groups]
+    finally:
+        db.close()
+
+@router.get("/model-multipliers")
+async def list_model_multipliers(admin: User = Depends(require_admin)):
+    db = SessionLocal()
+    try:
+        models = db.query(CustomerPrice).filter(CustomerPrice.is_current == 1).order_by(CustomerPrice.model).all()
+        rows = db.query(ModelMultiplier).all()
+        rows_map = {row.model: parse_hourly_multipliers(row.hourly_multipliers) for row in rows}
+        return [{"model": model.model, "hourly_multipliers": rows_map.get(model.model, parse_hourly_multipliers(None))} for model in models]
+    finally:
+        db.close()
+
+@router.post("/model-multipliers")
+async def update_model_multipliers(req: HourlyMultipliersUpdate, admin: User = Depends(require_admin)):
+    if len(req.hourly_multipliers) != 24:
+        raise HTTPException(status_code=400, detail="峰值曲线必须包含 24 个小时倍数")
+    if any(value <= 0 or value > 10 for value in req.hourly_multipliers):
+        raise HTTPException(status_code=400, detail="小时的倍数必须在 0.01 到 10 之间")
+    db = SessionLocal()
+    try:
+        row = db.query(ModelMultiplier).filter(ModelMultiplier.model == req.model).first()
+        if row is None:
+            row = ModelMultiplier(model=req.model, hourly_multipliers="")
+            db.add(row)
+        row.hourly_multipliers = json.dumps([round(float(value), 4) for value in req.hourly_multipliers])
+        row.version = (row.version or 1) + 1
+        audit_log(db, admin.id, "update_model_multiplier", "model", req.model, "24h curve updated")
+        db.commit()
+        return {"message": "峰谷倍数已更新", "model": req.model, "hourly_multipliers": parse_hourly_multipliers(row.hourly_multipliers)}
     finally:
         db.close()
 
