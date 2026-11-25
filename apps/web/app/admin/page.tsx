@@ -302,6 +302,24 @@ export default function AdminPage() {
   ];
   const selectedGroupObject = groups.find((group) => group.name === selectedGroup) || groups[0] || null;
   const exchangeRateValue = Number(exchangeRate) || 1;
+  const analyticsBucketCount = analyticsRange === "today" ? 24 : analyticsRange === "month" ? 31 : 12;
+  const analyticsLabels = (() => {
+    if (analyticsSeries?.buckets?.length) return analyticsSeries.buckets;
+    if (analyticsRange === "today") return Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, "0")}:00`);
+    if (analyticsRange === "month") return Array.from({ length: 31 }, (_, day) => String(day + 1));
+    return Array.from({ length: 12 }, (_, month) => `${month + 1}月`);
+  })();
+  const zeroSeries = () => Array.from({ length: analyticsBucketCount }, () => 0);
+  const groupDatasets = analyticsSeries?.groups?.length
+    ? analyticsSeries.groups.map((group, index) => ({
+        label: group.name,
+        data: group.series.length ? group.series : zeroSeries(),
+        borderColor: ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444"][index % 5],
+        backgroundColor: ["rgba(37, 99, 235, .12)", "rgba(16, 185, 129, .12)", "rgba(245, 158, 11, .12)", "rgba(139, 92, 246, .12)", "rgba(239, 68, 68, .12)"][index % 5],
+        tension: 0.3,
+        borderWidth: 2,
+      }))
+    : [{ label: "无数据", data: zeroSeries(), borderColor: "#64748b", backgroundColor: "rgba(100, 116, 139, .12)", tension: 0.3, borderWidth: 2 }];
   const selectedGroupValue = selectedGroupObject?.name || "";
   const sortedPrices = [...prices].sort((first, second) => {
     if (sortMode === "group") {
@@ -528,16 +546,15 @@ export default function AdminPage() {
           <div className="grid grid-2" style={{ marginTop: 15 }}>
             <div className="card">
               <div className="card-title"><h3 className="section-title">所有用户用量</h3><span className="stat-mini">输入 / 输出 / 缓存创建 / 缓存读取</span></div>
-              {analyticsSeries ? (
                 <div style={{ height: 300, position: "relative" }}>
                   <Line
                     data={{
-                      labels: analyticsSeries.buckets,
+                      labels: analyticsLabels,
                       datasets: [
-                        { label: "输入", data: analyticsSeries.usage.input, borderColor: "#2563eb", backgroundColor: "rgba(37, 99, 235, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "输出", data: analyticsSeries.usage.output, borderColor: "#10b981", backgroundColor: "rgba(16, 185, 129, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "缓存创建", data: analyticsSeries.usage.cache_write, borderColor: "#f59e0b", backgroundColor: "rgba(245, 158, 11, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "缓存读取", data: analyticsSeries.usage.cache_read, borderColor: "#8b5cf6", backgroundColor: "rgba(139, 92, 246, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "输入", data: analyticsSeries?.usage?.input?.length ? analyticsSeries.usage.input : zeroSeries(), borderColor: "#2563eb", backgroundColor: "rgba(37, 99, 235, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "输出", data: analyticsSeries?.usage?.output?.length ? analyticsSeries.usage.output : zeroSeries(), borderColor: "#10b981", backgroundColor: "rgba(16, 185, 129, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存创建", data: analyticsSeries?.usage?.cache_write?.length ? analyticsSeries.usage.cache_write : zeroSeries(), borderColor: "#f59e0b", backgroundColor: "rgba(245, 158, 11, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存读取", data: analyticsSeries?.usage?.cache_read?.length ? analyticsSeries.usage.cache_read : zeroSeries(), borderColor: "#8b5cf6", backgroundColor: "rgba(139, 92, 246, .12)", tension: 0.3, borderWidth: 2 },
                       ],
                     }}
                     options={{
@@ -552,16 +569,14 @@ export default function AdminPage() {
                     }}
                   />
                 </div>
-              ) : <div className="empty">正在加载。</div>}
             </div>
             <div className="card">
               <div className="card-title"><h3 className="section-title">客户总余额</h3><span className="stat-mini">RM</span></div>
-              {analyticsSeries ? (
                 <div style={{ height: 300, position: "relative" }}>
                   <Line
                     data={{
-                      labels: analyticsSeries.buckets,
-                      datasets: [{ label: "客户总余额", data: analyticsSeries.wallet_balance, borderColor: "#16a34a", backgroundColor: "rgba(22, 163, 74, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                      labels: analyticsLabels,
+                      datasets: [{ label: "客户总余额", data: analyticsSeries?.wallet_balance?.length ? analyticsSeries.wallet_balance : zeroSeries(), borderColor: "#16a34a", backgroundColor: "rgba(22, 163, 74, .12)", tension: 0.3, borderWidth: 2, fill: true }],
                     }}
                     options={{
                       responsive: true,
@@ -575,25 +590,16 @@ export default function AdminPage() {
                     }}
                   />
                 </div>
-              ) : <div className="empty">正在加载。</div>}
             </div>
           </div>
           <div className="grid grid-2" style={{ marginTop: 15 }}>
             <div className="card">
               <div className="card-title"><h3 className="section-title">分组使用率</h3><span className="stat-mini">按 Token</span></div>
-              {analyticsSeries && analyticsSeries.groups.length > 0 ? (
                 <div style={{ height: 300, position: "relative" }}>
                   <Line
                     data={{
-                      labels: analyticsSeries.buckets,
-                      datasets: analyticsSeries.groups.map((group, index) => ({
-                        label: group.name,
-                        data: group.series,
-                        borderColor: ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444"][index % 5],
-                        backgroundColor: ["rgba(37, 99, 235, .12)", "rgba(16, 185, 129, .12)", "rgba(245, 158, 11, .12)", "rgba(139, 92, 246, .12)", "rgba(239, 68, 68, .12)"][index % 5],
-                        tension: 0.3,
-                        borderWidth: 2,
-                      })),
+                      labels: analyticsLabels,
+                      datasets: groupDatasets,
                     }}
                     options={{
                       responsive: true,
@@ -607,16 +613,14 @@ export default function AdminPage() {
                     }}
                   />
                 </div>
-              ) : <div className="empty">这个时间范围没有分组数据。</div>}
             </div>
             <div className="card">
               <div className="card-title"><h3 className="section-title">扣除成本后盈利</h3><span className="stat-mini">RM</span></div>
-              {analyticsSeries ? (
                 <div style={{ height: 300, position: "relative" }}>
                   <Line
                     data={{
-                      labels: analyticsSeries.buckets,
-                      datasets: [{ label: "RM", data: analyticsSeries.revenue.map((value, index) => Number((value - analyticsSeries.supplier_cost[index] * exchangeRateValue).toFixed(2))), borderColor: "#ef4444", backgroundColor: "rgba(239, 68, 68, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                      labels: analyticsLabels,
+                      datasets: [{ label: "RM", data: analyticsSeries?.revenue?.length ? analyticsSeries.revenue.map((value, index) => Number((value - (analyticsSeries.supplier_cost?.[index] ?? 0) * exchangeRateValue).toFixed(2))) : zeroSeries(), borderColor: "#ef4444", backgroundColor: "rgba(239, 68, 68, .12)", tension: 0.3, borderWidth: 2, fill: true }],
                     }}
                     options={{
                       responsive: true,
@@ -630,7 +634,6 @@ export default function AdminPage() {
                     }}
                   />
                 </div>
-              ) : <div className="empty">正在加载。</div>}
             </div>
           </div>
         </div>
