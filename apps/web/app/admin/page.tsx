@@ -449,8 +449,8 @@ export default function AdminPage() {
               <thead>
                 <tr>
                   <th>模型</th><th>组别</th><th>输入售价</th><th>输入成本</th><th>输出售价</th>
-                  <th>输出成本</th><th>缓存创建售价</th><th>缓存创建成本</th><th>缓存读取售价</th>
-                  <th>缓存读取成本</th><th>操作</th>
+                  <th>输出成本（RM）</th><th>缓存创建售价</th><th>缓存创建成本</th><th>缓存读取售价</th>
+                  <th>缓存读取成本（RM）</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
