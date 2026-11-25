@@ -70,6 +70,13 @@ function formatRM(value: number | undefined, fallback = "—") {
 const MULTIPLIER_CACHE_KEY = "public-multipliers-cache-v1";
 const MULTIPLIER_CACHE_TTL = 60_000;
 
+interface DetailData {
+  ranges: { label: string; series: number[] }[];
+  hours: string[];
+  current_multiplier: number;
+  series?: number[];
+}
+
 function SparkLine({ series }: { series: number[] }) {
   const points = series.length === 24 ? series : Array.from({ length: 24 }, () => 1);
   const min = Math.min(...points);
@@ -113,7 +120,6 @@ function cacheMultiplier(model: string, data: DetailData): void {
 
 function MultiplierModal({ model, onClose }: { model: string; onClose: () => void }) {
   const [data, setData] = useState<DetailData | null>(null);
-  const [range, setRange] = useState("1D");
   useEffect(() => {
     const cached = readCachedMultiplier(model);
     if (cached) { setData(cached); return; }
@@ -126,8 +132,7 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
       .then(setData)
       .catch(() => setData(null));
   }, [model]);
-  const active = data?.ranges.find((item) => item.label === range);
-  const series = active?.series || [];
+  const series = data?.ranges?.[0]?.series || data?.series || [];
   const min = Math.min(...series, 1);
   const max = Math.max(...series, 1.01);
   const pad = (max - min) * 0.15 || 0.1;
@@ -145,11 +150,6 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
             <span className="stat-mini">真实计费倍数 · 当前 {data?.current_multiplier?.toFixed(2) ?? "—"}×</span>
           </div>
           <button className="btn btn-ghost" onClick={onClose}>关闭</button>
-        </div>
-        <div className="tab-bar" style={{ margin: "14px 0" }}>
-          {(data?.ranges || []).map((item) => (
-            <button key={item.label} className={`chip${range === item.label ? " active" : ""}`} onClick={() => setRange(item.label)}>{item.label}</button>
-          ))}
         </div>
         {series.length > 0 ? (
           <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="multiplier-chart">
