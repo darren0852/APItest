@@ -67,6 +67,9 @@ function formatRM(value: number | undefined, fallback = "—") {
   return `RM ${(Number(value) || 0).toFixed(2)}`;
 }
 
+const MULTIPLIER_CACHE_KEY = "public-multipliers-cache-v1";
+const MULTIPLIER_CACHE_TTL = 60_000;
+
 function SparkLine({ series }: { series: number[] }) {
   const points = series.length === 24 ? series : Array.from({ length: 24 }, () => 1);
   const min = Math.min(...points);
@@ -86,12 +89,40 @@ interface DetailData {
   current_multiplier: number;
 }
 
+function readCachedMultiplier(model: string): DetailData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(MULTIPLIER_CACHE_KEY);
+    const payload = raw ? JSON.parse(raw) as Record<string, { saved_at: number; data: DetailData }> : {};
+    const cached = payload[model];
+    return cached && Date.now() - cached.saved_at < MULTIPLIER_CACHE_TTL ? cached.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheMultiplier(model: string, data: DetailData): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(MULTIPLIER_CACHE_KEY);
+    const payload = raw ? JSON.parse(raw) as Record<string, { saved_at: number; data: DetailData }> : {};
+    payload[model] = { saved_at: Date.now(), data };
+    localStorage.setItem(MULTIPLIER_CACHE_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
 function MultiplierModal({ model, onClose }: { model: string; onClose: () => void }) {
   const [data, setData] = useState<DetailData | null>(null);
   const [range, setRange] = useState("1D");
   useEffect(() => {
+    const cached = readCachedMultiplier(model);
+    if (cached) { setData(cached); return; }
     fetch(`${API}/public/model-multiplier-history/${encodeURIComponent(model)}`)
       .then((response) => response.json())
+      .then((payload) => {
+        cacheMultiplier(model, payload);
+        return payload;
+      })
       .then(setData)
       .catch(() => setData(null));
   }, [model]);

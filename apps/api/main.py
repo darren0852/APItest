@@ -297,11 +297,16 @@ async def model_multiplier_history(model: str):
         sgt = timezone(timedelta(hours=8))
         now = datetime.now(sgt)
         points = []
+        date_values = list({(now - timedelta(hours=offset)).date().isoformat() for offset in range(24)})
+        daily_rows = db.query(DailyMultiplier).filter(
+            DailyMultiplier.model == model,
+            DailyMultiplier.business_date.in_(date_values)
+        ).all()
+        daily_map = {row.business_date: parse_hourly_multipliers(row.hourly_multipliers) for row in daily_rows}
         for offset in range(23, -1, -1):
             bucket = now - timedelta(hours=offset)
             date_value = bucket.date().isoformat()
-            row = db.query(DailyMultiplier).filter(DailyMultiplier.model == model, DailyMultiplier.business_date == date_value).first()
-            curve = parse_hourly_multipliers(row.hourly_multipliers if row else None)
+            curve = daily_map.get(date_value, parse_hourly_multipliers(None))
             timestamp = f"{date_value} {bucket.hour:02d}:00"
             points.append({"timestamp": timestamp, "multiplier": curve[bucket.hour]})
         series = [point["multiplier"] for point in points]
