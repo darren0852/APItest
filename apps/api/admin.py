@@ -38,6 +38,8 @@ class PriceUpdate(BaseModel):
     output_sell_per_token: float
     cache_write_sell_per_token: Optional[float] = 0
     cache_read_sell_per_token: Optional[float] = 0
+    cache_write_cost_per_token: Optional[float] = 0
+    cache_read_cost_per_token: Optional[float] = 0
     group_name: Optional[str] = None
 
 class HourlyMultipliersUpdate(BaseModel):
@@ -95,7 +97,60 @@ def audit_log(db, admin_id: int, action: str, target_type: str = None, target_id
     entry = AuditLog(admin_id=admin_id, action=action, target_type=target_type, target_id=target_id, detail=detail)
     db.add(entry)
 
+def _supplier_cost_rmb(db):
+    from decimal import Decimal
+    from sqlalchemy import func
+
+    price_map = {
+        row.model: row
+        for row in db.query(ProviderPrice).filter(ProviderPrice.is_current == 1).all()
+    }
+    usage_rows = (
+        db.query(
+            UsageRecord.model,
+            func.sum(UsageRecord.input_tokens),
+            func.sum(UsageRecord.output_tokens),
+            func.sum(UsageRecord.cache_write_tokens),
+            func.sum(UsageRecord.cache_read_tokens),
+        )
+        .group_by(UsageRecord.model)
+        .all()
+    )
+    total = Decimal("0")
+    for model, input_tokens, output_tokens, cache_write, cache_read in usage_rows:
+        price = price_map.get(model)
+        if price is None:
+            continue
+        total += (
+            (input_tokens or 0) * price.input_cost_per_token
+            + (output_tokens or 0) * price.output_cost_per_token
+            + (cache_write or 0) * price.cache_write_cost_per_token
+            + (cache_read or 0) * price.cache_read_cost_per_token
+        ) / Decimal("1000000")
+    return total
+
+
+def _customer_wallet_summary(db):
+    customer_wallets = (
+        db.query(Wallet)
+        .join(User, Wallet.user_id == User.id)
+        .filter(User.status != "admin")
+        .all()
+    )
+    admin_wallet = (
+        db.query(Wallet)
+        .join(User, Wallet.user_id == User.id)
+        .filter(User.email == "ngdarren0852@gmail.com")
+        .first()
+    )
+    return (
+        sum((wallet.available_balance or 0) for wallet in customer_wallets),
+        admin_wallet.available_balance or 0 if admin_wallet else 0,
+    )
+
+
 @router.get("/stats")
+
 async def get_stats(admin: User = Depends(require_admin)):
     db = SessionLocal()
     try:
@@ -242,7 +297,21 @@ async def get_pricing(admin: User = Depends(require_admin)):
         pp_map = {p.model: p for p in provider_prices}
         cp_map = {c.model: c for c in customer_prices}
         all_models = sorted(set(list(pp_map.keys()) + list(cp_map.keys())))
-        return [{"model": m, "group_name": cp_map[m].group_name if m in cp_map else None, "input_cost": float(pp_map[m].input_cost_per_token) if m in pp_map else None, "output_cost": float(pp_map[m].output_cost_per_token) if m in pp_map else None, "cost_version": pp_map[m].version if m in pp_map else None, "input_sell": float(cp_map[m].input_sell_per_token) if m in cp_map else None, "output_sell": float(cp_map[m].output_sell_per_token) if m in cp_map else None, "cache_write_sell": float(cp_map[m].cache_write_sell_per_token) if m in cp_map else None, "cache_read_sell": float(cp_map[m].cache_read_sell_per_token) if m in cp_map else None, "sell_version": cp_map[m].version if m in cp_map else None, "margin_note": "sell - cost"} for m in all_models]
+        return [{
+            "model": m,
+            "group_name": cp_map[m].group_name if m in cp_map else None,
+            "input_cost": float(pp_map[m].input_cost_per_token) if m in pp_map else None,
+            "output_cost": float(pp_map[m].output_cost_per_token) if m in pp_map else None,
+            "cache_write_cost": float(pp_map[m].cache_write_cost_per_token) if m in pp_map else None,
+            "cache_read_cost": float(pp_map[m].cache_read_cost_per_token) if m in pp_map else None,
+            "cost_version": pp_map[m].version if m in pp_map else None,
+            "input_sell": float(cp_map[m].input_sell_per_token) if m in cp_map else None,
+            "output_sell": float(cp_map[m].output_sell_per_token) if m in cp_map else None,
+            "cache_write_sell": float(cp_map[m].cache_write_sell_per_token) if m in cp_map else None,
+            "cache_read_sell": float(cp_map[m].cache_read_sell_per_token) if m in cp_map else None,
+            "sell_version": cp_map[m].version if m in cp_map else None,
+            "margin_note": "sell - cost",
+        } for m in all_models]
     finally:
         db.close()
 
@@ -255,7 +324,16 @@ async def update_pricing(req: PriceUpdate, admin: User = Depends(require_admin))
         old_pp = db.query(ProviderPrice).filter(ProviderPrice.model == req.model, ProviderPrice.is_current == 1).first()
         if old_pp:
             old_pp.is_current = 0
-        pp = ProviderPrice(model=req.model, input_cost_per_token=Decimal(str(req.input_cost_per_token)), output_cost_per_token=Decimal(str(req.output_cost_per_token)), version=(old_pp.version + 1 if old_pp else 1), is_current=1, updated_by=admin.id)
+        pp = ProviderPrice(
+            model=req.model,
+            input_cost_per_token=Decimal(str(req.input_cost_per_token)),
+            output_cost_per_token=Decimal(str(req.output_cost_per_token)),
+            cache_write_cost_per_token=Decimal(str(req.cache_write_cost_per_token or 0)),
+            cache_read_cost_per_token=Decimal(str(req.cache_read_cost_per_token or 0)),
+            version=(old_pp.version + 1 if old_pp else 1),
+            is_current=1,
+            updated_by=admin.id,
+        )
         db.add(pp)
         old_cp = db.query(CustomerPrice).filter(CustomerPrice.model == req.model, CustomerPrice.is_current == 1).first()
         if old_cp:
@@ -384,6 +462,29 @@ async def delete_pricing_group(group_id: int, admin: User = Depends(require_admi
         audit_log(db, admin.id, "delete_pricing_group", "model_group", group.name, group.name)
         db.commit()
         return {"message": "分组已删除", "id": group_id}
+    finally:
+        db.close()
+
+@router.post("/pricing-groups/{group_id}/rename")
+async def rename_pricing_group(group_id: int, req: PricingGroupCreate, admin: User = Depends(require_admin)):
+    db = SessionLocal()
+    try:
+        group = db.query(ModelGroup).filter(ModelGroup.id == group_id).first()
+        if group is None:
+            raise HTTPException(status_code=404, detail="分组不存在")
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="分组名称不能为空")
+        duplicate = db.query(ModelGroup).filter(ModelGroup.name == name, ModelGroup.id != group_id).first()
+        if duplicate:
+            raise HTTPException(status_code=400, detail="分组名称已存在")
+        old_name = group.name
+        db.query(CustomerPrice).filter(CustomerPrice.group_name == old_name).update({"group_name": name}, synchronize_session=False)
+        db.query(APIKey).filter(APIKey.group_name == old_name).update({"group_name": name}, synchronize_session=False)
+        group.name = name
+        audit_log(db, admin.id, "rename_pricing_group", "model_group", name, f"old_name={old_name}")
+        db.commit()
+        return {"message": "分组名称已更新", "id": group.id, "name": group.name}
     finally:
         db.close()
 
@@ -542,6 +643,23 @@ async def delete_supplier_route(route_id: int, admin: User = Depends(require_adm
     finally:
         db.close()
 
+@router.post("/accounting/reset")
+async def reset_accounting(admin: User = Depends(require_admin)):
+    db = SessionLocal()
+    try:
+        db.query(UsageRecord).delete(synchronize_session=False)
+        db.query(WalletLedger).delete(synchronize_session=False)
+        wallets = db.query(Wallet).with_for_update().all()
+        for wallet in wallets:
+            wallet.reserved_balance = 0
+            wallet.available_balance = Decimal("100.00") if wallet.user and wallet.user.email == "ngdarren0852@gmail.com" else Decimal("0.00")
+            wallet.version = (wallet.version or 0) + 1
+        audit_log(db, admin.id, "reset_accounting", "system", None, "Clear usage records, ledger and reset wallets.")
+        db.commit()
+        return {"message": "测试账本已重置，管理员钱包已设为 RM 100.00"}
+    finally:
+        db.close()
+
 @router.get("/finance")
 async def get_finance(admin: User = Depends(require_admin)):
     db = SessionLocal()
@@ -555,7 +673,17 @@ async def get_finance(admin: User = Depends(require_admin)):
         total_wallet = sum(w[0] for w in wallet_rows) if wallet_rows else 0
         reserved_rows = db.query(Wallet).with_entities(Wallet.reserved_balance).all()
         total_reserved = sum(w[0] for w in reserved_rows) if reserved_rows else 0
-        return {"total_topups": float(topups or 0), "total_usage_billed": float(usage_total or 0), "total_plan_purchases": float(plan_purchases or 0), "total_wallet_balance": float(total_wallet), "total_reserved": float(total_reserved)}
+        customer_wallet, admin_wallet = _customer_wallet_summary(db)
+        return {
+            "total_topups": float(topups or 0),
+            "total_usage_billed": float(usage_total or 0),
+            "total_plan_purchases": float(plan_purchases or 0),
+            "total_wallet_balance": float(total_wallet),
+            "total_reserved": float(total_reserved),
+            "total_customer_wallet_balance": float(customer_wallet),
+            "admin_wallet_balance": float(admin_wallet),
+            "total_supplier_cost_rmb": float(_supplier_cost_rmb(db)),
+        }
     finally:
         db.close()
 

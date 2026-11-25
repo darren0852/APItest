@@ -7,8 +7,8 @@ import AppShell from "../components/AppShell";
 interface AdminUser { id: number; email: string; status: string; risk_flag: boolean; created_at: string; balance: number; reserved: number; active_keys: number; total_requests: number; active_plans: number; }
 interface UserDetail { user: any; wallet: any; keys: any[]; recent_usage: any[]; recent_ledger: any[]; entitlements: any[]; }
 interface Stats { total_users: number; active_users: number; suspended_users: number; flagged_users: number; active_api_keys: number; total_api_requests: number; total_input_tokens: number; total_output_tokens: number; total_cost: number; total_wallet_balance: number; active_plans: number; }
-interface Finance { total_topups: number; total_usage_billed: number; total_plan_purchases: number; total_wallet_balance: number; total_reserved: number; }
-interface PriceRow { model: string; group_name: string | null; input_cost: number | null; output_cost: number | null; cost_version: number | null; input_sell: number | null; output_sell: number | null; cache_write_sell: number | null; cache_read_sell: number | null; sell_version: number | null; }
+interface Finance { total_topups: number; total_usage_billed: number; total_plan_purchases: number; total_wallet_balance: number; total_reserved: number; total_customer_wallet_balance: number; admin_wallet_balance: number; total_supplier_cost_rmb: number; }
+interface PriceRow { model: string; group_name: string | null; input_cost: number | null; output_cost: number | null; cache_write_cost: number | null; cache_read_cost: number | null; cost_version: number | null; input_sell: number | null; output_sell: number | null; cache_write_sell: number | null; cache_read_sell: number | null; sell_version: number | null; }
 interface PricingGroup { id: number; name: string; model_count: number; key_count: number; }
 interface SupplierRoute { id: number; model_name: string; upstream_model: string; endpoint_url: string; api_key_last4: string; }
 interface LedgerEntry { id: number; user_id: number; type: string; amount: number; balance_after: number; reference: string; created_at: string; }
@@ -27,6 +27,7 @@ export default function AdminPage() {
   const [groups, setGroups] = useState<PricingGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [groupName, setGroupName] = useState("");
+  const [sortMode, setSortMode] = useState<"group" | "model">("group");
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
   const [deletePrice, setDeletePrice] = useState<PriceRow | null>(null);
@@ -133,6 +134,11 @@ export default function AdminPage() {
     });
   };
 
+  const resetTestAccounting = async () => {
+    if (!window.confirm("确认重置测试账本吗？会清空用量记录和账本，并把所有客户余额设为 RM 0。")) return;
+    await post("accounting/reset", undefined, loadAll);
+  };
+
   const adjustBalance = async (userId: number) => {
     await post("users/adjust-balance", { user_id: userId, amount: Number(adjustAmount), reason: adjustReason || "管理员调整" }, async () => {
       setAdjustUser(null); setAdjustAmount(""); setAdjustReason("");
@@ -152,6 +158,52 @@ export default function AdminPage() {
     await post(action, body, async () => { await loadUsers(search, statusFilter); });
   };
 
+  const createGroup = async () => {
+    const name = groupName.trim();
+    if (!name) return;
+    await post("pricing-groups", { name }, async () => {
+      setGroupName("");
+      setSelectedGroup(name);
+      await loadAll();
+    });
+  };
+
+  const renameGroup = async () => {
+    const name = groupName.trim();
+    if (!name || !selectedGroupObject) return;
+    await post(`pricing-groups/${selectedGroupObject.id}/rename`, { name }, async () => {
+      setGroupName("");
+      setSelectedGroup(name);
+      await loadAll();
+    });
+  };
+
+  const removeGroup = async () => {
+    if (!selectedGroupObject) return;
+    if (!window.confirm(`确定删除组别 ${selectedGroupObject.name} 吗？`)) return;
+    await remove(`pricing-groups/${selectedGroupObject.id}`, async () => {
+      setSelectedGroup("");
+      setGroupName("");
+      await loadAll();
+    });
+  };
+
+  const movePrice = async (price: PriceRow, groupNameValue: string) => {
+    if (!groupNameValue || groupNameValue === price.group_name) return;
+    await post("pricing", {
+      model: price.model,
+      input_cost_per_token: price.input_cost ?? 0,
+      output_cost_per_token: price.output_cost ?? 0,
+      cache_write_cost_per_token: price.cache_write_cost ?? 0,
+      cache_read_cost_per_token: price.cache_read_cost ?? 0,
+      input_sell_per_token: price.input_sell ?? 0,
+      output_sell_per_token: price.output_sell ?? 0,
+      cache_write_sell_per_token: price.cache_write_sell ?? 0,
+      cache_read_sell_per_token: price.cache_read_sell ?? 0,
+      group_name: groupNameValue,
+    }, async () => { await loadAll(); });
+  };
+
   const savePrice = async () => {
     if (!editPrice) return;
     await post("pricing", {
@@ -162,6 +214,8 @@ export default function AdminPage() {
       output_sell_per_token: editPrice.output_sell ?? 0,
       cache_write_sell_per_token: editPrice.cache_write_sell ?? 0,
       cache_read_sell_per_token: editPrice.cache_read_sell ?? 0,
+      cache_write_cost_per_token: editPrice.cache_write_cost ?? 0,
+      cache_read_cost_per_token: editPrice.cache_read_cost ?? 0,
       group_name: editPrice.group_name,
     }, async () => {
       setEditPrice(null);
@@ -225,15 +279,21 @@ export default function AdminPage() {
   const tabs = [
     { id: "stats", label: "总览" },
     { id: "users", label: "用户" },
-    { id: "pricing", label: "模型定价" },
+    { id: "pricing", label: "模型管理" },
     { id: "suppliers", label: "模型连接" },
     { id: "ledger", label: "账本" },
     { id: "audit", label: "审计" },
   ];
   const selectedGroupObject = groups.find((group) => group.name === selectedGroup) || groups[0] || null;
   const selectedGroupValue = selectedGroupObject?.name || "";
-  const canDeleteSelectedGroup = Boolean(selectedGroupObject && (selectedGroupObject.model_count ?? 0) === 0 && (selectedGroupObject.key_count ?? 0) === 0);
-  const groupPrices = prices.filter((price) => price.group_name === selectedGroupValue);
+  const sortedPrices = [...prices].sort((first, second) => {
+    if (sortMode === "group") {
+      const firstGroup = first.group_name || "";
+      const secondGroup = second.group_name || "";
+      return firstGroup.localeCompare(secondGroup, "zh-Hans-CN") || first.model.localeCompare(second.model, "zh-Hans-CN");
+    }
+    return first.model.localeCompare(second.model, "zh-Hans-CN");
+  });
 
   return (
     <AppShell active="/admin" mode="admin" email={email} title="管理员后台" subtitle="用户、收入、定价、模型连接、账本和审计" actions={<button className="button button-secondary" onClick={async () => { await loadAll(); setMessage("数据已刷新"); }}>刷新数据</button>}>
@@ -244,6 +304,10 @@ export default function AdminPage() {
       </div>
 
       {tab === "stats" && stats && finance && (
+        <>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <button className="button button-danger" onClick={resetTestAccounting}>重置测试账本</button>
+        </div>
         <div className="grid grid-4">
           <div className="card"><div className="metric-label">用户总数</div><div className="metric-value">{stats.total_users}</div><div className="metric-trend">{stats.active_users} 个可用</div></div>
           <div className="card"><div className="metric-label">可用 Key</div><div className="metric-value">{stats.active_api_keys}</div><div className="stat-mini">{stats.active_plans} 个可用套餐</div></div>
@@ -253,9 +317,11 @@ export default function AdminPage() {
           <div className="card"><div className="metric-label">充值总额</div><div className="metric-value">RM {finance.total_topups.toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">用量计费</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div></div>
           <div className="card"><div className="metric-label">套餐购买</div><div className="metric-value">RM {Math.abs(finance.total_plan_purchases).toFixed(2)}</div></div>
-          <div className="card"><div className="metric-label">封禁用户</div><div className="metric-value">{stats.suspended_users}</div><div className="stat-mini">{stats.flagged_users} 个风险标记</div></div>
-          <div className="card"><div className="metric-label">模型连接</div><div className="metric-value">{supplierRoutes.length}</div><div className="stat-mini">出售模型已对接上游</div></div>
+          <div className="card"><div className="metric-label">客户总余额</div><div className="metric-value">RM {finance.total_customer_wallet_balance.toFixed(2)}</div><div className="stat-mini">管理员余额 RM {finance.admin_wallet_balance.toFixed(2)}</div></div>
+          <div className="card"><div className="metric-label">客户已用余额</div><div className="metric-value">RM {Math.abs(finance.total_usage_billed).toFixed(2)}</div><div className="stat-mini">按实际扣费记录</div></div>
+          <div className="card"><div className="metric-label">供应商成本</div><div className="metric-value">¥{finance.total_supplier_cost_rmb.toFixed(2)}</div><div className="stat-mini">按供应商价格表</div></div>
         </div>
+        </>
       )}
 
       {tab === "users" && (
@@ -336,44 +402,89 @@ export default function AdminPage() {
         <div className="card">
           <div className="card-title">
             <div>
-              <h2 className="section-title">模型定价</h2>
-              <div className="stat-mini">价格单位为 RM，显示两位小数</div>
+              <h2 className="section-title">模型管理</h2>
+              <div className="stat-mini">价格单位 RM</div>
             </div>
-            <button className="button button-primary" onClick={() => setShowModelModal(true)} disabled={!selectedGroupValue}>创建模型</button>
+            <button className="button button-primary" onClick={() => setShowModelModal(true)}>创建模型</button>
           </div>
-          <div className="group-bar">
-            <div className="chip-strip">
-              {groups.map((group) => (
-                <button key={group.id} className={`chip${selectedGroupValue === group.name ? " active" : ""}`} onClick={() => setSelectedGroup(group.name)}>
-                  {group.name} · {group.model_count ?? 0}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="button button-danger" onClick={() => setDeleteGroup(selectedGroupObject)} disabled={!selectedGroupObject}>删除组别</button>
-              <button className="button button-secondary" onClick={() => { setShowGroupModal(true); setGroupName(""); }}>创建组别</button>
-            </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button className="button button-secondary" onClick={() => setSortMode("group")}>组别排序</button>
+            <button className="button button-secondary" onClick={() => setSortMode("model")}>模型排序</button>
           </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto auto", gap: 8, marginBottom: 16 }}>
+            <select
+              className="select"
+              value={selectedGroup}
+              onChange={(event) => { setSelectedGroup(event.target.value); setGroupName(event.target.value); }}
+            >
+              <option value="">选择组别</option>
+              {groups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}
+            </select>
+            <input className="input" value={groupName} placeholder="组别名称" onChange={(event) => setGroupName(event.target.value)} />
+            <button className="button button-primary" onClick={createGroup} disabled={!groupName.trim()}>创建</button>
+            <button className="button button-secondary" onClick={renameGroup} disabled={!selectedGroupObject || !groupName.trim()}>编辑</button>
+            <button className="button button-danger" onClick={removeGroup} disabled={!selectedGroupObject}>删除</button>
+          </div>
+
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>模型</th><th>输入售价</th><th>输出售价</th><th>缓存创建售价</th><th>缓存读取售价</th><th>操作</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>模型</th><th>组别</th><th>输入售价</th><th>输入成本</th><th>输出售价</th>
+                  <th>输出成本</th><th>缓存创建售价</th><th>缓存创建成本</th><th>缓存读取售价</th>
+                  <th>缓存读取成本</th><th>操作</th>
+                </tr>
+              </thead>
               <tbody>
-                {groupPrices.map((price) => (
+                {sortedPrices.map((price) => (
                   <tr key={price.model}>
                     <td><code className="mono">{price.model}</code></td>
-                    <td><strong>RM {(price.input_sell ?? 0).toFixed(2)}</strong></td>
-                    <td><strong>RM {(price.output_sell ?? 0).toFixed(2)}</strong></td>
-                    <td><strong>RM {(price.cache_write_sell ?? 0).toFixed(2)}</strong></td>
-                    <td><strong>RM {(price.cache_read_sell ?? 0).toFixed(2)}</strong></td>
+                    <td>
+                      <select
+                        className="select"
+                        value={price.group_name || ""}
+                        onChange={(event) => movePrice(price, event.target.value)}
+                      >
+                        <option value="">未分组</option>
+                        {groups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}
+                      </select>
+                    </td>
+                    <td>RM {(price.input_sell ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.input_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.output_sell ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.output_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.cache_write_sell ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.cache_write_cost ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.cache_read_sell ?? 0).toFixed(2)}</td>
+                    <td>RM {(price.cache_read_cost ?? 0).toFixed(2)}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="button button-ghost" onClick={() => setEditPrice({ ...price, group_name: price.group_name || "", input_sell: price.input_sell ?? 0, output_sell: price.output_sell ?? 0, cache_write_sell: price.cache_write_sell ?? 0, cache_read_sell: price.cache_read_sell ?? 0 })}>编辑</button> <button className="button button-secondary" onClick={() => openMultiplier(price.model)}>峰谷倍数</button> <button className="button button-danger" onClick={() => setDeletePrice(price)}>删除</button>
+                      <button
+                        className="button button-ghost"
+                        onClick={() => setEditPrice({
+                          ...price,
+                          input_cost: price.input_cost ?? 0,
+                          output_cost: price.output_cost ?? 0,
+                          cache_write_cost: price.cache_write_cost ?? 0,
+                          cache_read_cost: price.cache_read_cost ?? 0,
+                          input_sell: price.input_sell ?? 0,
+                          output_sell: price.output_sell ?? 0,
+                          cache_write_sell: price.cache_write_sell ?? 0,
+                          cache_read_sell: price.cache_read_sell ?? 0,
+                        })}
+                      >
+                        编辑
+                      </button>{" "}
+                      <button className="button button-secondary" onClick={() => openMultiplier(price.model)}>峰谷倍数</button>{" "}
+                      <button className="button button-danger" onClick={() => setDeletePrice(price)}>删除</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {groupPrices.length === 0 && <div className="empty">这个组别还没有模型。</div>}
+          {sortedPrices.length === 0 && <div className="empty">还没有模型。</div>}
         </div>
       )}
 
@@ -528,9 +639,13 @@ export default function AdminPage() {
             </select>
             <div className="grid grid-2">
               <div><label className="label">输入售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.input_sell} onChange={(event) => setEditPrice({ ...editPrice, input_sell: Number(event.target.value) })} /></div>
+              <div><label className="label">输入成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.input_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, input_cost: Number(event.target.value) })} /></div>
               <div><label className="label">输出售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.output_sell} onChange={(event) => setEditPrice({ ...editPrice, output_sell: Number(event.target.value) })} /></div>
+              <div><label className="label">输出成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.output_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, output_cost: Number(event.target.value) })} /></div>
               <div><label className="label">缓存创建售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_write_sell ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_write_sell: Number(event.target.value) })} /></div>
+              <div><label className="label">缓存创建成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_write_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_write_cost: Number(event.target.value) })} /></div>
               <div><label className="label">缓存读取售价（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_read_sell ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_read_sell: Number(event.target.value) })} /></div>
+              <div><label className="label">缓存读取成本（RM）</label><input className="input" type="number" step="0.000001" value={editPrice.cache_read_cost ?? 0} onChange={(event) => setEditPrice({ ...editPrice, cache_read_cost: Number(event.target.value) })} /></div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
               <button className="button button-secondary" onClick={() => setEditPrice(null)}>取消</button>
