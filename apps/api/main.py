@@ -1231,14 +1231,13 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                             continue
                         text_parts.append(str(piece))
                         output_token_estimate = max(len("".join(text_parts)) // 4, 1)
-                        if len(text_parts) % 4 == 0:
-                            yield (
-                                "event: message_delta\ndata: " + json.dumps({
-                                    "type": "message_delta",
-                                    "delta": {"stop_reason": None, "stop_sequence": None},
-                                    "usage": {"output_tokens": output_token_estimate},
-                                }, ensure_ascii=False) + "\n\n"
-                            ).encode("utf-8")
+                        yield (
+                            "event: message_delta\ndata: " + json.dumps({
+                                "type": "message_delta",
+                                "delta": {"stop_reason": None, "stop_sequence": None},
+                                "usage": {"output_tokens": output_token_estimate},
+                            }, ensure_ascii=False) + "\n\n"
+                        ).encode("utf-8")
                         yield (
                             "event: content_block_delta\ndata: " + json.dumps({
                                 "type": "content_block_delta",
