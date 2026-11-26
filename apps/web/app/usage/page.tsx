@@ -6,6 +6,10 @@ import AppShell from "../components/AppShell";
 
 interface UsageRecord { id: number; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost: number; created_at: string; }
 
+function uncachedInputTokens(record: UsageRecord) {
+  return Math.max(record.input_tokens - (record.cache_read_tokens || 0) - (record.cache_write_tokens || 0), 0);
+}
+
 export default function Usage() {
   const [records, setRecords] = useState<UsageRecord[]>([]);
   const [email, setEmail] = useState("");
@@ -22,30 +26,30 @@ export default function Usage() {
   }, []);
 
   const totalCost = records.reduce((sum, item) => sum + item.cost, 0);
-  const totalInput = records.reduce((sum, item) => sum + item.input_tokens, 0);
+  const totalInput = records.reduce((sum, item) => sum + uncachedInputTokens(item), 0);
   const totalOutput = records.reduce((sum, item) => sum + item.output_tokens, 0);
   const totalCacheRead = records.reduce((sum, item) => sum + (item.cache_read_tokens || 0), 0);
   const totalCacheWrite = records.reduce((sum, item) => sum + (item.cache_write_tokens || 0), 0);
 
   return (
-    <AppShell active="/usage" email={email} title="用量记录" subtitle="总输入由未缓存输入和缓存读写组成；费用按各自单价计费。">
+    <AppShell active="/usage" email={email} title="用量记录" subtitle="按未缓存输入、输出、缓存读取和缓存写入分开展示。">
       <div className="grid grid-4" style={{ marginBottom: 20 }}>
         <div className="card"><div className="metric-label">请求数</div><div className="metric-value">{records.length.toLocaleString()}</div></div>
         <div className="card"><div className="metric-label">已计费金额</div><div className="metric-value">RM {totalCost.toFixed(2)}</div></div>
-        <div className="card"><div className="metric-label">总输入 Token</div><div className="metric-value">{totalInput.toLocaleString()}</div><div className="stat-mini">缓存读取 {totalCacheRead.toLocaleString()}</div></div>
+        <div className="card"><div className="metric-label">输入 Token</div><div className="metric-value">{totalInput.toLocaleString()}</div><div className="stat-mini">缓存读取 {totalCacheRead.toLocaleString()}</div></div>
         <div className="card"><div className="metric-label">输出 Token</div><div className="metric-value">{totalOutput.toLocaleString()}</div><div className="stat-mini">缓存写入 {totalCacheWrite.toLocaleString()}</div></div>
       </div>
       <div className="card">
         <div className="card-title"><h2 className="section-title">请求历史</h2><span className="stat-mini">最近记录</span></div>
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>时间</th><th>模型</th><th>总输入</th><th>输出</th><th>缓存读取</th><th>缓存写入</th><th>费用</th></tr></thead>
+            <thead><tr><th>时间</th><th>模型</th><th>输入</th><th>输出</th><th>缓存读取</th><th>缓存写入</th><th>费用</th></tr></thead>
             <tbody>
               {records.map((record) => (
                 <tr key={record.id}>
                   <td>{new Date(record.created_at).toLocaleString()}</td>
                   <td><code className="mono">{record.model}</code></td>
-                  <td>{record.input_tokens.toLocaleString()}</td>
+                  <td>{uncachedInputTokens(record).toLocaleString()}</td>
                   <td>{record.output_tokens.toLocaleString()}</td>
                   <td>{(record.cache_read_tokens || 0).toLocaleString()}</td>
                   <td>{(record.cache_write_tokens || 0).toLocaleString()}</td>
