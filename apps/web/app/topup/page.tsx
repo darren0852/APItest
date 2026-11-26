@@ -6,52 +6,39 @@ import AppShell from "../components/AppShell";
 
 export default function Topup() {
   const [amount, setAmount] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [showUnsupported, setShowUnsupported] = useState(false);
   const router = useRouter();
-  const amounts = [10, 20, 50, 100, 200];
   const API = "https://api.vemixapp.com";
-
-  const submit = async (value: number) => {
-    const token = localStorage.getItem("token");
-    if (!token) { router.push("/login"); return; }
-    setLoading(true); setError(""); setMessage("");
-    try {
-      const response = await fetch(`${API}/billing/topups`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ amount: value }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setMessage(`充值成功 · 新余额 RM ${data.balance}`);
-        setTimeout(() => router.push("/dashboard"), 1200);
-      } else setError(data.detail || "充值失败");
-    } catch { setError("服务器错误"); } finally { setLoading(false); }
-  };
 
   return (
     <AppShell active="/topup" title="钱包充值" subtitle="为钱包计费请求增加余额">
-      <div className="grid grid-2" style={{ maxWidth: 900 }}>
-        <div className="card">
-          <div className="section-title">快捷金额</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-            {amounts.map((value) => (
-              <button key={value} className="button button-secondary" style={{ minHeight: 54, minWidth: 110 }} disabled={loading} onClick={() => submit(value)}>RM {value}</button>
-            ))}
-          </div>
-        </div>
+      <div style={{ maxWidth: 560 }}>
         <div className="card">
           <div className="section-title">自定义金额</div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
             <input className="input" type="number" min="1" value={amount} placeholder="RM" onChange={(event) => setAmount(event.target.value)} />
-            <button className="button button-primary" disabled={loading || !amount} onClick={() => submit(Number(amount))}>立即充值</button>
+            <button className="button button-primary" disabled={!amount} onClick={() => setShowUnsupported(true)}>立即充值</button>
           </div>
-          {error && <div className="notice notice-danger" style={{ marginTop: 14 }}>{error}</div>}
-          {message && <div className="notice notice-success" style={{ marginTop: 14 }}>{message}</div>}
+        </div>
+
+        <div className="card" style={{ marginTop: 18 }}>
+          <div className="section-title">余额 / 配套兑换</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 18 }}>
+            <button className="button button-secondary">余额兑换</button>
+            <button className="button button-secondary" onClick={() => router.push("/plans")}>配套兑换</button>
+          </div>
         </div>
       </div>
+
+      {showUnsupported && (
+        <div className="modal-overlay" onClick={() => setShowUnsupported(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 420, textAlign: "center" }}>
+            <h2 style={{ marginBottom: 10 }}>暂不支持</h2>
+            <p style={{ margin: 0, color: "var(--ink-muted)" }}>自定义金额充值暂未开放，稍后再试。</p>
+            <button className="button button-primary" style={{ marginTop: 22, width: "100%" }} onClick={() => setShowUnsupported(false)}>知道了</button>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }
