@@ -150,11 +150,6 @@ export default function AdminPage() {
     });
   };
 
-  const resetTestAccounting = async () => {
-    if (!window.confirm("确认重置测试账本吗？会清空用量记录和账本，并把所有客户余额设为 RM 0。")) return;
-    await post("accounting/reset", undefined, loadAll);
-  };
-
   const adjustBalance = async (userId: number) => {
     await post("users/adjust-balance", { user_id: userId, amount: Number(adjustAmount), reason: adjustReason || "管理员调整" }, async () => {
       setAdjustUser(null); setAdjustAmount(""); setAdjustReason("");
@@ -347,7 +342,6 @@ export default function AdminPage() {
       mode="admin"
       email={email}
       title="管理员后台"
-      subtitle={`当前页面：${activeTab.label} · 用户、收入、定价、模型连接、账本和审计`}
       actions={(
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div>
@@ -391,9 +385,6 @@ export default function AdminPage() {
 
       {tab === "stats" && stats && finance && (
         <>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-          <button className="button button-danger" onClick={resetTestAccounting}>重置测试账本</button>
-        </div>
         <div className="grid grid-4">
           <div className="card"><div className="metric-label">已激活用户</div><div className="metric-value">{stats.active_users}</div></div>
           <div className="card"><div className="metric-label">已激活 Key</div><div className="metric-value">{stats.active_api_keys}</div></div>
@@ -679,10 +670,9 @@ export default function AdminPage() {
       {tab === "suppliers" && (
         <div className="card">
           <div className="card-title">
-            <div><h2 className="section-title">出售模型 → 供应商模型</h2><div className="stat-mini">只连接，不填写协议；协议会由端点自动识别</div></div>
+            <div><h2 className="section-title">出售模型 → 供应商模型</h2></div>
             <span className="stat-mini">{supplierRoutes.length} 条连接</span>
           </div>
-          <div className="notice" style={{ marginBottom: 14 }}>客户请求 → 中转站鉴权和计费 → 供应商端点与密钥 → 上游模型返回。</div>
           <div className="grid grid-4">
             <div>
               <label className="label">出售模型</label>

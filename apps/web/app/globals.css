@@ -170,14 +170,6 @@ button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
 .side-icon { width: 20px; text-align: center; font-size: 15px; opacity: .72; }
 .side-item.active .side-icon { opacity: 1; }
 
-.side-footer {
-  margin-top: auto;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: #f9fafb;
-}
-
 .main {
   flex: 1;
   min-width: 0;

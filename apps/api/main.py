@@ -155,6 +155,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
+
+def require_customer_user(user: User = Depends(get_current_user)):
+    if user.status == "admin":
+        raise HTTPException(status_code=403, detail="Admin accounts cannot access customer services")
+    return user
+
 def validate_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> APIKey:
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing API Key")
@@ -163,7 +169,12 @@ def validate_api_key(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=401, detail="Invalid API Key format")
     key_hash = KEY_MANAGER.hash_key(raw_key)
     db = SessionLocal()
-    api_key = db.query(APIKey).filter(APIKey.key_hash == key_hash, APIKey.status == "active").first()
+    api_key = (
+        db.query(APIKey)
+        .join(User, User.id == APIKey.user_id)
+        .filter(APIKey.key_hash == key_hash, APIKey.status == "active", User.status != "admin")
+        .first()
+    )
     db.close()
     if api_key is None:
         raise HTTPException(status_code=401, detail="API Key not found or revoked")
@@ -187,6 +198,9 @@ def validate_api_key_raw(raw_key: str) -> APIKey:
         db_key = db_v.query(APIKey).filter(APIKey.key_hash == key_hash).first()
         if db_key is None:
             raise HTTPException(status_code=401, detail="API Key not found or revoked")
+        db_user = db_v.query(User).filter(User.id == db_key.user_id).first()
+        if db_user is None or db_user.status != "active":
+            raise HTTPException(status_code=403, detail="API Key unavailable for this account")
         if db_key.status != "active":
             raise HTTPException(status_code=403, detail="API Key disabled")
         if db_key.expires_at and db_key.expires_at <= datetime.now(timezone.utc):
@@ -196,7 +210,7 @@ def validate_api_key_raw(raw_key: str) -> APIKey:
         db_v.close()
 
 @app.get("/me/model-groups")
-async def get_model_groups(user: User = Depends(get_current_user)):
+async def get_model_groups(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         groups = db.query(ModelGroup).order_by(ModelGroup.sort_order, ModelGroup.id).all()
@@ -437,7 +451,7 @@ async def login(user: UserCreate):
         db.close()
 
 @app.post("/me/api-keys")
-async def create_api_key(key: APIKeyCreate, user: User = Depends(get_current_user)):
+async def create_api_key(key: APIKeyCreate, user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         existing_groups = {group.name for group in db.query(ModelGroup).all()}
@@ -472,7 +486,7 @@ async def create_api_key(key: APIKeyCreate, user: User = Depends(get_current_use
         db.close()
 
 @app.get("/me/api-keys")
-async def list_api_keys(user: User = Depends(get_current_user)):
+async def list_api_keys(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         keys = db.query(APIKey).filter(APIKey.user_id == user.id).order_by(APIKey.created_at.desc()).all()
@@ -527,7 +541,7 @@ async def list_api_keys(user: User = Depends(get_current_user)):
         db.close()
 
 @app.put("/me/api-keys/{key_id}")
-async def update_api_key(key_id: int, key: APIKeyUpdate, user: User = Depends(get_current_user)):
+async def update_api_key(key_id: int, key: APIKeyUpdate, user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         db_key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == user.id).first()
@@ -558,7 +572,7 @@ async def update_api_key(key_id: int, key: APIKeyUpdate, user: User = Depends(ge
         db.close()
 
 @app.post("/me/api-keys/{key_id}/status")
-async def update_api_key_status(key_id: int, body: APIKeyStatusUpdate, user: User = Depends(get_current_user)):
+async def update_api_key_status(key_id: int, body: APIKeyStatusUpdate, user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         db_key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == user.id).first()
@@ -573,7 +587,7 @@ async def update_api_key_status(key_id: int, body: APIKeyStatusUpdate, user: Use
         db.close()
 
 @app.delete("/me/api-keys/{key_id}")
-async def revoke_api_key(key_id: int, user: User = Depends(get_current_user)):
+async def revoke_api_key(key_id: int, user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         db_key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == user.id).first()
@@ -588,7 +602,7 @@ async def revoke_api_key(key_id: int, user: User = Depends(get_current_user)):
         db.close()
 
 @app.get("/me/balance")
-async def get_balance(user: User = Depends(get_current_user)):
+async def get_balance(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         return WALLET_SERVICE.get_balance(db, user.id)
@@ -596,7 +610,7 @@ async def get_balance(user: User = Depends(get_current_user)):
         db.close()
 
 @app.post("/billing/topups")
-async def topup(req: TopupRequest, user: User = Depends(get_current_user)):
+async def topup(req: TopupRequest, user: User = Depends(require_customer_user)):
     if req.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     if req.amount < 1:
@@ -614,7 +628,7 @@ async def topup(req: TopupRequest, user: User = Depends(get_current_user)):
         db.close()
 
 @app.get("/me/ledger")
-async def get_ledger(user: User = Depends(get_current_user)):
+async def get_ledger(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         entries = db.query(WalletLedger).filter(WalletLedger.user_id == user.id).order_by(WalletLedger.created_at.desc()).limit(50).all()
@@ -623,7 +637,7 @@ async def get_ledger(user: User = Depends(get_current_user)):
         db.close()
 
 @app.get("/me/usage")
-async def get_usage(user: User = Depends(get_current_user)):
+async def get_usage(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         records = db.query(UsageRecord).filter(UsageRecord.user_id == user.id).order_by(UsageRecord.created_at.desc()).limit(50).all()
@@ -635,7 +649,7 @@ async def get_usage(user: User = Depends(get_current_user)):
         db.close()
 
 @app.get("/me/dashboard")
-async def get_dashboard(user: User = Depends(get_current_user), days: int = 7, granularity: str = "day"):
+async def get_dashboard(user: User = Depends(require_customer_user), days: int = 7, granularity: str = "day"):
     range_days = min(max(days, 1), 90)
     sgt = timezone(timedelta(hours=8))
     now = datetime.now(sgt)
@@ -741,7 +755,7 @@ async def list_plans():
         db.close()
 
 @app.post("/plans/purchase")
-async def purchase_plan(req: PlanPurchaseRequest, user: User = Depends(get_current_user)):
+async def purchase_plan(req: PlanPurchaseRequest, user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         plan = db.query(Plan).filter(Plan.id == req.plan_id, Plan.is_active == 1).first()
@@ -764,7 +778,7 @@ async def purchase_plan(req: PlanPurchaseRequest, user: User = Depends(get_curre
         db.close()
 
 @app.get("/me/entitlement")
-async def get_entitlement(user: User = Depends(get_current_user)):
+async def get_entitlement(user: User = Depends(require_customer_user)):
     db = SessionLocal()
     try:
         ents = db.query(Entitlement).filter(Entitlement.user_id == user.id, Entitlement.status == "active", Entitlement.expires_at > datetime.now(timezone.utc)).all()
@@ -804,7 +818,7 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
             raise HTTPException(status_code=403, detail="当前分组不支持该模型协议")
         supplier_route_id = int(supplier_route.id)
         user = db.query(User).filter(User.id == api_key.user_id).first()
-        if user is None or user.status not in ("active", "admin"):
+        if user is None or user.status != "active":
             raise HTTPException(status_code=403, detail="Account suspended")
         ent_result = PlanService.check_entitlement(db, user.id, req.model)
         if ent_result[0] == "plan":
@@ -1074,7 +1088,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
             api_key_last4=supplier_route.api_key_last4,
         )
         user = db.query(User).filter(User.id == api_key.user_id).first()
-        if user is None or user.status not in ("active", "admin"):
+        if user is None or user.status != "active":
             raise HTTPException(status_code=403, detail="Account suspended")
         ent_result = PlanService.check_entitlement(db, user.id, req.model)
         if ent_result[0] == "plan":
@@ -1497,7 +1511,7 @@ async def proxy_responses(req: ResponsesRequest, api_key: APIKey = Depends(valid
             api_key_last4=current_route_raw.api_key_last4,
         )
         user = db.query(User).filter(User.id == api_key.user_id).first()
-        if user is None or user.status not in ("active", "admin"):
+        if user is None or user.status != "active":
             raise HTTPException(status_code=403, detail="Account suspended")
         ent_result = PlanService.check_entitlement(db, user.id, req.model)
         if ent_result[0] == "plan":

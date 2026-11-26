@@ -16,10 +16,6 @@ const userLinks = [
 
 const adminLinks = [
   { href: "/admin", label: "管理后台", icon: "▣" },
-  { href: "/dashboard", label: "用户仪表盘", icon: "◈" },
-  { href: "/api-keys", label: "API Keys", icon: "⌘" },
-  { href: "/models", label: "模型广场", icon: "◇" },
-  { href: "/docs", label: "接口文档", icon: "❯" },
 ];
 
 const sidebarIcons: Record<string, React.ReactNode> = {
@@ -82,11 +78,6 @@ export default function AppShell({
               </Link>
             ))}
           </nav>
-        </div>
-        <div className="side-footer">
-          <div className="stat-label">当前登录</div>
-          <div style={{ margin: "6px 0 10px", fontSize: 12.5, wordBreak: "break-all" }}>{email || "用户"}</div>
-          <button className="btn btn-secondary" style={{ width: "100%", height: 32, fontSize: 12 }} onClick={logout}>退出登录</button>
         </div>
       </aside>
       <main className="main">
