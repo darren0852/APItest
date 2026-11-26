@@ -1,5 +1,5 @@
 """Admin panel endpoints - full management per architecture doc Section 8.1."""
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import Optional
@@ -689,7 +689,7 @@ async def reset_accounting(admin: User = Depends(require_admin)):
         db.close()
 
 @router.get("/analytics/series")
-async def get_analytics_series(range: str = "today", admin: User = Depends(require_admin)):
+async def get_analytics_series(period: str = Query("today", alias="range"), admin: User = Depends(require_admin)):
     from datetime import timedelta, timezone as dt_timezone
     from decimal import Decimal
 
@@ -697,13 +697,13 @@ async def get_analytics_series(range: str = "today", admin: User = Depends(requi
     try:
         tz = dt_timezone(timedelta(hours=8))
         now = datetime.now(tz)
-        if range == "month":
+        if period == "month":
             start = datetime(now.year, now.month, 1, tzinfo=tz)
             end = None
             bucket_count = 31
             bucket_seconds = 86400
             labels = [str(day) for day in range(1, 32)]
-        elif range == "year":
+        elif period == "year":
             start = datetime(now.year, 1, 1, tzinfo=tz)
             end = None
             bucket_count = 12
@@ -782,7 +782,7 @@ async def get_analytics_series(range: str = "today", admin: User = Depends(requi
             carry += float(ledger.amount or 0)
         profit_series = [float(revenue_series[i]) - float(supplier_cost_series[i]) for i in range(bucket_count)]
         return {
-            "range": range,
+            "range": period,
             "buckets": labels,
             "usage": {
                 "input": input_series,
