@@ -1168,6 +1168,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
         def anthropic_stream():
             text_parts = []
             stream_usage = {}
+            is_anthropic = current_supplier_route.protocol == "anthropic"
             try:
                 with httpx.stream(
                     "POST",
@@ -1197,13 +1198,21 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                             },
                         }, ensure_ascii=False) + "\n\n"
                     ).encode("utf-8")
-                    yield (
-                        "event: content_block_start\ndata: " + json.dumps({
-                            "type": "content_block_start",
-                            "index": 0,
-                            "content_block": {"type": "text", "text": ""},
-                        }) + "\n\n"
-                    ).encode("utf-8")
+                    if not is_anthropic:
+                        yield (
+                            "event: content_block_start\ndata: " + json.dumps({
+                                "type": "content_block_start",
+                                "index": 0,
+                                "content_block": {"type": "thinking", "thinking": ""},
+                            }) + "\n\n"
+                        ).encode("utf-8")
+                        yield (
+                            "event: content_block_start\ndata: " + json.dumps({
+                                "type": "content_block_start",
+                                "index": 1,
+                                "content_block": {"type": "text", "text": ""},
+                            }) + "\n\n"
+                        ).encode("utf-8")
                     for raw_line in resp.iter_lines():
                         line = raw_line.decode("utf-8", "ignore") if isinstance(raw_line, bytes) else raw_line
                         if not line.startswith("data:"):
@@ -1215,7 +1224,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                             chunk = json.loads(data)
                         except Exception:
                             continue
-                        if current_supplier_route.protocol == "anthropic":
+                        if is_anthropic:
                             event_type = chunk.get("type")
                             if event_type == "message_start":
                                 stream_usage.update(((chunk.get("message") or {}).get("usage") or {}))
@@ -1230,28 +1239,39 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                         if not piece:
                             continue
                         text_parts.append(str(piece))
-                        output_token_estimate = max(len("".join(text_parts)) // 4, 1)
+                        piece_tokens = max(1, (len(piece) + 3) // 4)
                         yield (
-                            "event: message_delta\ndata: " + json.dumps({
-                                "type": "message_delta",
-                                "delta": {"stop_reason": None, "stop_sequence": None},
-                                "usage": {"output_tokens": output_token_estimate},
+                            "event: content_block_delta\ndata: " + json.dumps({
+                                "type": "content_block_delta",
+                                "index": 0,
+                                "delta": {
+                                    "type": "thinking_delta",
+                                    "thinking": "",
+                                    "estimated_tokens": piece_tokens,
+                                },
                             }, ensure_ascii=False) + "\n\n"
                         ).encode("utf-8")
                         yield (
                             "event: content_block_delta\ndata: " + json.dumps({
                                 "type": "content_block_delta",
-                                "index": 0,
+                                "index": 1,
                                 "delta": {"type": "text_delta", "text": piece},
                             }, ensure_ascii=False) + "\n\n"
                         ).encode("utf-8")
-                    yield (
-                        "event: content_block_stop\ndata: " + json.dumps({
-                            "type": "content_block_stop",
-                            "index": 0,
-                        }) + "\n\n"
-                    ).encode("utf-8")
-                    if current_supplier_route.protocol == "anthropic":
+                    if not is_anthropic:
+                        yield (
+                            "event: content_block_stop\ndata: " + json.dumps({
+                                "type": "content_block_stop",
+                                "index": 1,
+                            }) + "\n\n"
+                        ).encode("utf-8")
+                        yield (
+                            "event: content_block_stop\ndata: " + json.dumps({
+                                "type": "content_block_stop",
+                                "index": 0,
+                            }) + "\n\n"
+                        ).encode("utf-8")
+                    if is_anthropic:
                         output_tokens = stream_usage.get("output_tokens") or max(len("".join(text_parts)) // 4, 1)
                     else:
                         output_tokens = stream_usage.get("completion_tokens") or max(len("".join(text_parts)) // 4, 1)
