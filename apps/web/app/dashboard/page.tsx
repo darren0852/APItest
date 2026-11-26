@@ -100,7 +100,8 @@ export default function DashboardPage() {
     if (!dashboard || !dashboard.model_distribution.length) return null;
     const labels = dashboard.model_distribution.map((item) => item.model);
     const values = dashboard.model_distribution.map((item) => item.tokens);
-    const colors = labels.map((_, index) => `hsl(${210 + index * 36} 72% 62%)`);
+    const tailAdminPalette = ["#465fff", "#12b76a", "#f79009", "#7a95ff", "#f04438", "#3641f5", "#0e9384", "#f8b0a1"];
+    const colors = labels.map((_, index) => tailAdminPalette[index % tailAdminPalette.length]);
     return {
       labels,
       datasets: [{
@@ -125,10 +126,10 @@ export default function DashboardPage() {
     return {
       labels: points.map((point) => range === "today" ? point.date.slice(11, 16) : point.date),
       datasets: [
-        { label: "输入", data: points.map((point) => point.input), borderColor: "#6b7d5a", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
-        { label: "输出", data: points.map((point) => point.output), borderColor: "#4a9d8b", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
-        { label: "缓存创建", data: points.map((point) => point.cacheWrite), borderColor: "#b08968", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
-        { label: "缓存读取", data: points.map((point) => point.cacheRead), borderColor: "#82956f", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "输入", data: points.map((point) => point.input), borderColor: "#465fff", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "输出", data: points.map((point) => point.output), borderColor: "#12b76a", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "缓存创建", data: points.map((point) => point.cacheWrite), borderColor: "#f79009", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
+        { label: "缓存读取", data: points.map((point) => point.cacheRead), borderColor: "#7a95ff", borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false },
       ],
     };
   }, [dashboard, range]);

@@ -22,6 +22,16 @@ const adminLinks = [
   { href: "/docs", label: "接口文档", icon: "❯" },
 ];
 
+const sidebarIcons: Record<string, React.ReactNode> = {
+  "/admin": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><path d="M17 16.5v3M15.5 18h3"/></svg>),
+  "/dashboard": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>),
+  "/api-keys": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="12" r="4"/><path d="M12 12h8M17 12v3M20 12v2"/></svg>),
+  "/models": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z"/><path d="M9.8 13.7a3.5 3.5 0 1 1 4.4 0"/></svg>),
+  "/usage": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>),
+  "/topup": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/></svg>),
+  "/docs": (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13.5 4.5H8A2.5 2.5 0 0 0 5.5 7v10A2.5 2.5 0 0 0 8 19.5h8A2.5 2.5 0 0 0 18.5 17V9.5Z"/><path d="M9 10h6M9 13.5h6"/></svg>),
+};
+
 export default function AppShell({
   active, email, title, subtitle, actions, mode = "user", children,
 }: {
@@ -53,7 +63,7 @@ export default function AppShell({
 
   return (
     <div className="app-shell">
-      <aside className="side" style={{ left: sidebarOpen ? 0 : undefined }}>
+      <aside className={`side${sidebarOpen ? " open" : ""}`}>
         <Link href="/" className="side-logo" onClick={() => setSidebarOpen(false)}>
           <div className="side-logo-mark">AI</div>
           <div>
@@ -66,7 +76,7 @@ export default function AppShell({
           <nav>
             {links.map((link) => (
               <Link key={link.href} href={link.href} className={`side-item${active === link.href ? " active" : ""}`} onClick={() => setSidebarOpen(false)}>
-                <span className="side-icon" aria-hidden>{link.icon}</span>
+                <span className="side-icon" aria-hidden>{sidebarIcons[link.href] || link.icon}</span>
                 <span style={{ flex: 1 }}>{link.label}</span>
                 {active === link.href && <span style={{ fontSize: 9, opacity: .5 }} aria-hidden>●</span>}
               </Link>
@@ -87,10 +97,15 @@ export default function AppShell({
           </div>
           <div className="topbar-user">
             {actions && <div style={{ display: "flex", gap: 10 }}>{actions}</div>}
-            <div className="avatar">{initials}</div>
-            <div className="avatar-info">
-              <div className="avatar-label">{mode === "admin" ? "Admin" : "User"}</div>
-              <div className="avatar-email">{email || "—"}</div>
+            <div className="topbar-account">
+              <div className="avatar">{initials}</div>
+              <div className="avatar-info">
+                <div className="avatar-label">当前登录</div>
+                <div className="avatar-email">{email || "—"}</div>
+              </div>
+              <button className="button button-secondary logout-button" onClick={logout} aria-label="退出登录">
+                退出登录
+              </button>
             </div>
           </div>
         </div>

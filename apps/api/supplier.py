@@ -5,6 +5,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from pricing import Supplier, SupplierRoute
+from protocol import normalize_messages_for_protocol
 from supplier_crypto import decrypt_secret
 
 
@@ -77,6 +78,7 @@ def build_anthropic_payload(platform_model: str, route: SupplierRoute, messages:
 
 def upstream_request(route: SupplierRoute, messages: list, stream: bool = False, extra_body: dict = None) -> tuple[dict, dict, dict]:
     api_key = decrypt_secret(route.api_key_encrypted)
+    messages = normalize_messages_for_protocol(messages, route.protocol)
     if route.protocol == "anthropic":
         headers = {
             "x-api-key": api_key,

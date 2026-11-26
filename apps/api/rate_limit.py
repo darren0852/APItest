@@ -60,9 +60,30 @@ class RateLimiter:
             except Exception:
                 pass
         with self._lock:
-            current = self._mem_get(redis_key) + 1
+            current = self._mem.get(redis_key, (0, 0))[0] + 1
             self._mem[redis_key] = (current, 0)
         return current
+
+    def try_acquire_concurrency(self, key_id: int, limit: int = 5) -> bool:
+        if limit <= 0:
+            return False
+        redis_key = f"concurrency:{key_id}"
+        if self.r is not None:
+            try:
+                current = int(self.r.incr(redis_key))
+                if current > limit:
+                    self.r.decr(redis_key)
+                    return False
+                self.r.expire(redis_key, 3600)
+                return True
+            except Exception:
+                pass
+        with self._lock:
+            current = self._mem.get(redis_key, (0, 0))[0] + 1
+            if current > limit:
+                return False
+            self._mem[redis_key] = (current, 0)
+        return True
 
     def decrement_concurrency(self, key_id: int) -> int:
         redis_key = f"concurrency:{key_id}"
@@ -76,7 +97,7 @@ class RateLimiter:
             except Exception:
                 pass
         with self._lock:
-            current = self._mem_get(redis_key)
+            current = self._mem.get(redis_key, (0, 0))[0]
             if current > 0:
                 self._mem[redis_key] = (current - 1, 0)
                 return current - 1

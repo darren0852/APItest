@@ -146,10 +146,10 @@ function MultiplierModal({ model, onClose }: { model: string; onClose: () => voi
     datasets: [{
       label: "计费倍数",
       data: series,
-      borderColor: "#6b7d5a",
-      backgroundColor: "rgba(106,125,90,.12)",
+      borderColor: "#465fff",
+      backgroundColor: "rgba(70,95,255,.12)",
       borderWidth: 2,
-      pointBackgroundColor: "#4a9d8b",
+      pointBackgroundColor: "#465fff",
       pointBorderColor: "#ffffff",
       pointBorderWidth: 2,
       pointRadius: 4,

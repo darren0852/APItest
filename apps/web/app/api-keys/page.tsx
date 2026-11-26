@@ -21,6 +21,7 @@ interface ApiKey {
   total: UsageSummary;
   quota_limit: number | null;
   rate_limit: number | null;
+  concurrency_limit: number;
 }
 
 interface Balance { available: number; reserved: number; currency: string; }
@@ -28,7 +29,7 @@ interface Entitlement { id: number; plan_name: string; expires_at: string; remai
 interface KeyGroup { id: string; name: string; description: string; }
 
 const API = "https://api.vemixapp.com";
-const emptyForm = { name: "", group_name: "", quota_limit: "", rate_limit: "", expires_at: "" };
+const emptyForm = { name: "", group_name: "", quota_limit: "", rate_limit: "", concurrency_limit: "5", expires_at: "" };
 
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -83,6 +84,7 @@ export default function ApiKeysPage() {
       group_name: key.group_name || "",
       quota_limit: key.quota_limit ? String(key.quota_limit) : "",
       rate_limit: key.rate_limit ? String(key.rate_limit) : "",
+      concurrency_limit: String(key.concurrency_limit || 5),
       expires_at: key.expires_at ? key.expires_at.slice(0, 16) : "",
     });
     setError("");
@@ -104,6 +106,7 @@ export default function ApiKeysPage() {
           group_name: modalForm.group_name,
           quota_limit: Number(modalForm.quota_limit || 0),
           rate_limit: Number(modalForm.rate_limit || 0),
+          concurrency_limit: Number(modalForm.concurrency_limit || 5),
           expires_at: modalForm.expires_at || null,
         }),
       });
@@ -132,6 +135,7 @@ export default function ApiKeysPage() {
           group_name: modalForm.group_name || null,
           quota_limit: Number(modalForm.quota_limit || 0),
           rate_limit: Number(modalForm.rate_limit || 0),
+          concurrency_limit: Number(modalForm.concurrency_limit || 5),
           expires_at: modalForm.expires_at || null,
           clear_expires_at: !modalForm.expires_at,
         }),
@@ -248,13 +252,10 @@ export default function ApiKeysPage() {
                         <button className="button button-ghost" style={{ padding: 0 }} onClick={() => { setGroupEditorKey(groupEditorKey === key.id ? null : key.id); setGroupSearch(""); }}>选择分组</button>
                       </div>
                     </td>
-                    <td><span className="badge badge-info">{key.current_concurrency}</span><span className="stat-mini">上限 {key.rate_limit || 60}/分钟</span></td>
+                    <td><span className="badge badge-info">{key.current_concurrency}/{key.concurrency_limit || 5}</span><span className="stat-mini">单密钥并发上限</span></td>
                     <td>
                       <div className="stat-mini">
                         今日 RM {key.today.cost.toFixed(2)}<br />近30天 RM {key.month.cost.toFixed(2)}
-                        {((key.month.cache_read_tokens || 0) > 0 || (key.month.cache_write_tokens || 0) > 0) && (
-                          <><br />缓存读取 {(key.month.cache_read_tokens || 0).toLocaleString()} / 写入 {(key.month.cache_write_tokens || 0).toLocaleString()}</>
-                        )}
                       </div>
                     </td>
                     <td>{key.expires_at ? new Date(key.expires_at).toLocaleString() : "永久有效"}</td>
@@ -333,6 +334,9 @@ export default function ApiKeysPage() {
             <div className="stat-mini" style={{ marginTop: 6 }}>设置此 Key 可消费的最大金额。0 表示不限。</div>
             <label className="label" style={{ marginTop: 15 }}>速率限制</label>
             <input className="input" type="number" min="0" value={modalForm.rate_limit} placeholder="0 表示使用默认 60 次/分钟" onChange={(event) => setModalForm({ ...modalForm, rate_limit: event.target.value })} />
+            <label className="label" style={{ marginTop: 15 }}>并发上限</label>
+            <input className="input" type="number" min="1" max="5" value={modalForm.concurrency_limit} onChange={(event) => setModalForm({ ...modalForm, concurrency_limit: event.target.value })} />
+            <div className="stat-mini" style={{ marginTop: 6 }}>同一密钥最多允许 1 到 5 个请求同时处理。</div>
             <label className="label" style={{ marginTop: 15 }}>密钥有效期</label>
             <input className="input" type="datetime-local" value={modalForm.expires_at} onChange={(event) => setModalForm({ ...modalForm, expires_at: event.target.value })} />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>

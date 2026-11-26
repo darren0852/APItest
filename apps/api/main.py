@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from typing import Optional
@@ -20,6 +20,7 @@ from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE, get_model_price
 from plans import Plan, Entitlement, PlanService
 from pricing import CustomerPrice, DailyMultiplier, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, parse_hourly_multipliers
+from protocol import anthropic_event_to_openai_chunks
 from admin import router as admin_router
 from rate_limit import RATE_LIMITER
 from supplier import get_supplier_route, upstream_request, normalize_anthropic_response
@@ -29,6 +30,63 @@ app = FastAPI(title="AI API Platform", version="0.4.0")
 security = HTTPBearer(auto_error=False)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(admin_router)
+
+CONCURRENCY_PATHS = {"/v1/chat/completions", "/v1/messages", "/v1/responses"}
+
+
+class ConcurrencyLimitMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("path") not in CONCURRENCY_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        authorization = headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            raw_key = authorization[7:].strip()
+        elif headers.get("x-api-key", ""):
+            raw_key = headers["x-api-key"].strip()
+        else:
+            raw_key = ""
+
+        key_id = None
+        concurrency_limit = 5
+        if raw_key:
+            db = SessionLocal()
+            try:
+                key_row = (
+                    db.query(APIKey.id, APIKey.concurrency_limit)
+                    .filter(APIKey.key_hash == KEY_MANAGER.hash_key(raw_key), APIKey.status == "active")
+                    .first()
+                )
+                if key_row is not None:
+                    key_id = int(key_row.id)
+                    concurrency_limit = max(int(key_row.concurrency_limit or 5), 1)
+            finally:
+                db.close()
+
+        if key_id is None:
+            await self.app(scope, receive, send)
+            return
+
+        if not RATE_LIMITER.try_acquire_concurrency(key_id, concurrency_limit):
+            response = JSONResponse(status_code=429, content={"detail": "Concurrency limit exceeded for this API Key"})
+            await response(scope, receive, send)
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            RATE_LIMITER.decrement_concurrency(key_id)
+
+
+app.add_middleware(ConcurrencyLimitMiddleware)
 
 LITELLM_URL = "http://localhost:4000"
 
@@ -41,6 +99,7 @@ class APIKeyCreate(BaseModel):
     group_name: Optional[str] = None
     quota_limit: Optional[float] = None
     rate_limit: Optional[int] = None
+    concurrency_limit: Optional[int] = 5
     expires_at: Optional[datetime] = None
 
 class APIKeyUpdate(BaseModel):
@@ -48,6 +107,7 @@ class APIKeyUpdate(BaseModel):
     group_name: Optional[str] = None
     quota_limit: Optional[float] = None
     rate_limit: Optional[int] = None
+    concurrency_limit: Optional[int] = None
     expires_at: Optional[datetime] = None
     clear_expires_at: bool = False
 
@@ -393,6 +453,7 @@ async def create_api_key(key: APIKeyCreate, user: User = Depends(get_current_use
             group_name=key.group_name,
             quota_limit=Decimal(str(key.quota_limit)) if key.quota_limit and key.quota_limit > 0 else None,
             rate_limit=key.rate_limit if key.rate_limit and key.rate_limit > 0 else None,
+            concurrency_limit=min(max(key.concurrency_limit or 5, 1), 5),
             expires_at=key.expires_at,
         )
         db.add(db_key)
@@ -459,6 +520,7 @@ async def list_api_keys(user: User = Depends(get_current_user)):
                 },
                 "quota_limit": float(k.quota_limit) if k.quota_limit is not None else None,
                 "rate_limit": k.rate_limit,
+                "concurrency_limit": k.concurrency_limit,
             })
         return result
     finally:
@@ -482,6 +544,10 @@ async def update_api_key(key_id: int, key: APIKeyUpdate, user: User = Depends(ge
             db_key.quota_limit = Decimal(str(key.quota_limit)) if key.quota_limit > 0 else None
         if key.rate_limit is not None:
             db_key.rate_limit = key.rate_limit if key.rate_limit > 0 else None
+        if key.concurrency_limit is not None:
+            if key.concurrency_limit < 1 or key.concurrency_limit > 5:
+                raise HTTPException(status_code=400, detail="并发上限只能在 1 到 5 之间")
+            db_key.concurrency_limit = key.concurrency_limit
         if key.clear_expires_at:
             db_key.expires_at = None
         elif key.expires_at is not None:
@@ -769,23 +835,7 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
         messages_for_supplier = []
         if system_text:
             messages_for_supplier.append({"role": "system", "content": system_text})
-        for item in req.messages:
-            role = item.get("role") if isinstance(item, dict) else "user"
-            content = item.get("content", "") if isinstance(item, dict) else ""
-            if isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "")
-                        if block_type == "text":
-                            text_parts.append(str(block.get("text", "")))
-                        elif block_type == "tool_result":
-                            nested = block.get("content", "")
-                            text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
-                        elif block_type == "tool_use":
-                            text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
-                content = "\n".join(text_parts)
-            messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
+        messages_for_supplier.extend(req.messages or [])
         extra_params = {}
         for key in ("tools", "tool_choice", "temperature", "top_p"):
             value = getattr(req, key, None)
@@ -832,9 +882,15 @@ async def proxy_chat_completions(req: ChatCompletionRequest, api_key: APIKey = D
                             chunk = json.loads(data)
                         except Exception:
                             continue
-                        if chunk.get("usage"):
-                            stream_usage = chunk["usage"]
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+                        if current_supplier_route.protocol == "anthropic":
+                            for converted_chunk in anthropic_event_to_openai_chunks(chunk, req.model):
+                                if converted_chunk.get("usage"):
+                                    stream_usage = converted_chunk["usage"]
+                                yield f"data: {json.dumps(converted_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+                        else:
+                            if chunk.get("usage"):
+                                stream_usage = chunk["usage"]
+                            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode("utf-8")
                     resp.close()
                     usage = stream_usage.get("prompt_tokens_details") or {}
                     input_tokens = stream_usage.get("prompt_tokens") or estimated_input
@@ -1049,23 +1105,7 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
     messages_for_supplier = []
     if system_text:
         messages_for_supplier.append({"role": "system", "content": system_text})
-    for item in req.messages:
-        role = item.get("role") if isinstance(item, dict) else "user"
-        content = item.get("content", "") if isinstance(item, dict) else ""
-        if isinstance(content, list):
-            text_parts = []
-            for block in content:
-                if isinstance(block, dict):
-                    block_type = block.get("type", "")
-                    if block_type == "text":
-                        text_parts.append(str(block.get("text", "")))
-                    elif block_type == "tool_result":
-                        nested = block.get("content", "")
-                        text_parts.append(str(nested) if isinstance(nested, str) else json.dumps(nested, ensure_ascii=False))
-                    elif block_type == "tool_use":
-                        text_parts.append(json.dumps({"name": block.get("name"), "input": block.get("input", {})}, ensure_ascii=False))
-            content = "\n".join(text_parts)
-        messages_for_supplier.append({"role": "assistant" if role == "assistant" else "user", "content": str(content)})
+    messages_for_supplier.extend(req.messages or [])
     extra_params = {}
     for key in ("temperature", "top_p"):
         value = getattr(req, key, None)
@@ -1161,6 +1201,14 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                             chunk = json.loads(data)
                         except Exception:
                             continue
+                        if current_supplier_route.protocol == "anthropic":
+                            event_type = chunk.get("type")
+                            if event_type == "message_start":
+                                stream_usage.update(((chunk.get("message") or {}).get("usage") or {}))
+                            elif event_type == "message_delta":
+                                stream_usage.update((chunk.get("usage") or {}))
+                            yield f"{line}\n\n".encode("utf-8")
+                            continue
                         if chunk.get("usage"):
                             stream_usage = chunk["usage"]
                         delta = ((chunk.get("choices") or [{}])[0]).get("delta", {})
@@ -1181,7 +1229,10 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                             "index": 0,
                         }) + "\n\n"
                     ).encode("utf-8")
-                    output_tokens = stream_usage.get("completion_tokens") or max(len("".join(text_parts)) // 4, 1)
+                    if current_supplier_route.protocol == "anthropic":
+                        output_tokens = stream_usage.get("output_tokens") or max(len("".join(text_parts)) // 4, 1)
+                    else:
+                        output_tokens = stream_usage.get("completion_tokens") or max(len("".join(text_parts)) // 4, 1)
                     yield (
                         "event: message_delta\ndata: " + json.dumps({
                             "type": "message_delta",
@@ -1191,10 +1242,15 @@ async def proxy_messages(request: Request, req: ChatCompletionRequest):
                     ).encode("utf-8")
                     yield "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".encode("utf-8")
                     resp.close()
-                    input_tokens = stream_usage.get("prompt_tokens") or estimated_input
-                    prompt_details = stream_usage.get("prompt_tokens_details") or {}
-                    cached_tokens = prompt_details.get("cached_tokens") or 0
-                    cache_creation_tokens = prompt_details.get("cache_creation_input_tokens") or 0
+                    if current_supplier_route.protocol == "anthropic":
+                        input_tokens = stream_usage.get("input_tokens") or estimated_input
+                        cached_tokens = stream_usage.get("cache_read_input_tokens") or 0
+                        cache_creation_tokens = stream_usage.get("cache_creation_input_tokens") or 0
+                    else:
+                        input_tokens = stream_usage.get("prompt_tokens") or estimated_input
+                        prompt_details = stream_usage.get("prompt_tokens_details") or {}
+                        cached_tokens = prompt_details.get("cached_tokens") or 0
+                        cache_creation_tokens = prompt_details.get("cache_creation_input_tokens") or 0
                     uncached_input = max(input_tokens - cached_tokens - cache_creation_tokens, 0)
                     actual_cost = (
                         uncached_input * price["input"]

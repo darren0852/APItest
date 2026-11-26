@@ -83,6 +83,7 @@ export default function AdminPage() {
   const loadAll = useCallback(async () => {
     setError("");
     setEmail(localStorage.getItem("email") || "管理员");
+    setExchangeRate(localStorage.getItem("adminExchangeRate") || "1");
     const statsData = await get("stats"); if (statsData) setStats(statsData);
     const financeData = await get("finance"); if (financeData) setFinance(financeData);
     const usersData = await get("users"); if (usersData) setUsers(usersData);
@@ -300,6 +301,16 @@ export default function AdminPage() {
     { id: "ledger", label: "账本" },
     { id: "audit", label: "审计" },
   ];
+  const activeTab = tabs.find((item) => item.id === tab) || tabs[0];
+  const adminTabIcons: Record<string, React.ReactNode> = {
+    stats: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><path d="M8 15.5v-5M12 15.5V8.5M16 15.5v-3"/></svg>),
+    users: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8.5" r="3.5"/><path d="M3.5 19.5c.6-3.1 2.9-5 5.5-5s4.9 1.9 5.5 5"/><path d="M16.5 5.2a3.3 3.3 0 0 1 0 6.6M15.8 14.5c1.9.4 3.5 2 3.9 4.6"/></svg>),
+    pricing: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>),
+    suppliers: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M7 8h10M7 12h10M7 16h6"/><rect x="3.5" y="4.5" width="17" height="15" rx="4"/></svg>),
+    analytics: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 18.5V10M9.5 18.5V6M15 18.5v-6M20.5 18.5V9"/></svg>),
+    ledger: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3.5h12a2 2 0 0 1 2 2v15H8a2 2 0 0 1-2-2Z"/><path d="M9.5 8.5h7M9.5 12.5h7M9.5 16.5h4"/></svg>),
+    audit: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z"/><path d="M15.8 15.8 20.5 20.5"/></svg>),
+  };
   const selectedGroupObject = groups.find((group) => group.name === selectedGroup) || groups[0] || null;
   const exchangeRateValue = Number(exchangeRate) || 1;
   const analyticsBucketCount = analyticsRange === "today" ? 24 : analyticsRange === "month" ? 31 : 12;
@@ -314,8 +325,8 @@ export default function AdminPage() {
     ? analyticsSeries.groups.map((group, index) => ({
         label: group.name,
         data: group.series.length ? group.series : zeroSeries(),
-        borderColor: ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444"][index % 5],
-        backgroundColor: ["rgba(37, 99, 235, .12)", "rgba(16, 185, 129, .12)", "rgba(245, 158, 11, .12)", "rgba(139, 92, 246, .12)", "rgba(239, 68, 68, .12)"][index % 5],
+        borderColor: ["#465fff", "#12b76a", "#f79009", "#7a95ff", "#f04438"][index % 5],
+        backgroundColor: ["rgba(70, 95, 255, .12)", "rgba(18, 183, 106, .12)", "rgba(247, 144, 9, .12)", "rgba(122, 149, 255, .12)", "rgba(240, 68, 56, .12)"][index % 5],
         tension: 0.3,
         borderWidth: 2,
       }))
@@ -331,11 +342,51 @@ export default function AdminPage() {
   });
 
   return (
-    <AppShell active="/admin" mode="admin" email={email} title="管理员后台" subtitle="用户、收入、定价、模型连接、账本和审计" actions={<button className="button button-secondary" onClick={async () => { await loadAll(); setMessage("数据已刷新"); }}>刷新数据</button>}>
+    <AppShell
+      active="/admin"
+      mode="admin"
+      email={email}
+      title="管理员后台"
+      subtitle={`当前页面：${activeTab.label} · 用户、收入、定价、模型连接、账本和审计`}
+      actions={(
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div>
+            <div className="stat-label">汇率（1 CNY = RM）</div>
+            <input
+              className="input"
+              style={{ width: 110, height: 34, fontSize: 12.5 }}
+              type="number"
+              step="0.0001"
+              min="0"
+              value={exchangeRate}
+              onChange={(event) => {
+                setExchangeRate(event.target.value);
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("adminExchangeRate", event.target.value);
+                }
+              }}
+            />
+          </div>
+          <button className="button button-secondary" onClick={async () => { await loadAll(); setMessage("数据已刷新"); }}>刷新数据</button>
+        </div>
+      )}
+    >
       {error && <div className="notice notice-danger" style={{ marginBottom: 15 }}>{error}</div>}
       {message && <div className="notice notice-success" style={{ marginBottom: 15 }}>{message}</div>}
-      <div className="tab-bar">
-        {tabs.map((item) => (<button key={item.id} className={`chip${tab === item.id ? " active" : ""}`} onClick={() => { setTab(item.id); setDetail(null); }}>{item.label}</button>))}
+      <div className="admin-tabbar">
+        <div className="admin-tabbar-inner">
+          {tabs.map((item) => (
+            <button
+              key={item.id}
+              className={`admin-tab${tab === item.id ? " active" : ""}`}
+              aria-current={tab === item.id ? "page" : undefined}
+              onClick={() => { setTab(item.id); setDetail(null); }}
+            >
+              <span className="admin-tab-icon" aria-hidden>{adminTabIcons[item.id]}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "stats" && stats && finance && (
@@ -433,21 +484,7 @@ export default function AdminPage() {
               <h2 className="section-title">模型管理</h2>
               <div className="stat-mini">价格单位 RM · 成本按汇率换算</div>
             </div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-              <div>
-                <label className="label" style={{ marginBottom: 4 }}>汇率（1 CNY = RM）</label>
-                <input
-                  className="input"
-                  style={{ width: 130 }}
-                  type="number"
-                  step="0.0001"
-                  min="0"
-                  value={exchangeRate}
-                  onChange={(event) => { setExchangeRate(event.target.value); if (typeof window !== "undefined") { localStorage.setItem("adminExchangeRate", event.target.value); } }}
-                />
-              </div>
-              <button className="button button-primary" onClick={() => setShowModelModal(true)}>创建模型</button>
-            </div>
+            <button className="button button-primary" onClick={() => setShowModelModal(true)}>创建模型</button>
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -551,10 +588,10 @@ export default function AdminPage() {
                     data={{
                       labels: analyticsLabels,
                       datasets: [
-                        { label: "输入", data: analyticsSeries?.usage?.input?.length ? analyticsSeries.usage.input : zeroSeries(), borderColor: "#2563eb", backgroundColor: "rgba(37, 99, 235, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "输出", data: analyticsSeries?.usage?.output?.length ? analyticsSeries.usage.output : zeroSeries(), borderColor: "#10b981", backgroundColor: "rgba(16, 185, 129, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "缓存创建", data: analyticsSeries?.usage?.cache_write?.length ? analyticsSeries.usage.cache_write : zeroSeries(), borderColor: "#f59e0b", backgroundColor: "rgba(245, 158, 11, .12)", tension: 0.3, borderWidth: 2 },
-                        { label: "缓存读取", data: analyticsSeries?.usage?.cache_read?.length ? analyticsSeries.usage.cache_read : zeroSeries(), borderColor: "#8b5cf6", backgroundColor: "rgba(139, 92, 246, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "输入", data: analyticsSeries?.usage?.input?.length ? analyticsSeries.usage.input : zeroSeries(), borderColor: "#465fff", backgroundColor: "rgba(70, 95, 255, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "输出", data: analyticsSeries?.usage?.output?.length ? analyticsSeries.usage.output : zeroSeries(), borderColor: "#12b76a", backgroundColor: "rgba(18, 183, 106, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存创建", data: analyticsSeries?.usage?.cache_write?.length ? analyticsSeries.usage.cache_write : zeroSeries(), borderColor: "#f79009", backgroundColor: "rgba(247, 144, 9, .12)", tension: 0.3, borderWidth: 2 },
+                        { label: "缓存读取", data: analyticsSeries?.usage?.cache_read?.length ? analyticsSeries.usage.cache_read : zeroSeries(), borderColor: "#7a95ff", backgroundColor: "rgba(122, 149, 255, .12)", tension: 0.3, borderWidth: 2 },
                       ],
                     }}
                     options={{
@@ -576,7 +613,7 @@ export default function AdminPage() {
                   <Line
                     data={{
                       labels: analyticsLabels,
-                      datasets: [{ label: "客户总余额", data: analyticsSeries?.wallet_balance?.length ? analyticsSeries.wallet_balance : zeroSeries(), borderColor: "#16a34a", backgroundColor: "rgba(22, 163, 74, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                      datasets: [{ label: "客户总余额", data: analyticsSeries?.wallet_balance?.length ? analyticsSeries.wallet_balance : zeroSeries(), borderColor: "#12b76a", backgroundColor: "rgba(18, 183, 106, .12)", tension: 0.3, borderWidth: 2, fill: true }],
                     }}
                     options={{
                       responsive: true,
@@ -620,7 +657,7 @@ export default function AdminPage() {
                   <Line
                     data={{
                       labels: analyticsLabels,
-                      datasets: [{ label: "RM", data: analyticsSeries?.revenue?.length ? analyticsSeries.revenue.map((value, index) => Number((value - (analyticsSeries.supplier_cost?.[index] ?? 0) * exchangeRateValue).toFixed(2))) : zeroSeries(), borderColor: "#ef4444", backgroundColor: "rgba(239, 68, 68, .12)", tension: 0.3, borderWidth: 2, fill: true }],
+                      datasets: [{ label: "RM", data: analyticsSeries?.revenue?.length ? analyticsSeries.revenue.map((value, index) => Number((value - (analyticsSeries.supplier_cost?.[index] ?? 0) * exchangeRateValue).toFixed(2))) : zeroSeries(), borderColor: "#f04438", backgroundColor: "rgba(240, 68, 56, .12)", tension: 0.3, borderWidth: 2, fill: true }],
                     }}
                     options={{
                       responsive: true,
