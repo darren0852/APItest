@@ -79,6 +79,21 @@ def build_anthropic_payload(platform_model: str, route: SupplierRoute, messages:
 def upstream_request(route: SupplierRoute, messages: list, stream: bool = False, extra_body: dict = None) -> tuple[dict, dict, dict]:
     api_key = decrypt_secret(route.api_key_encrypted)
     messages = normalize_messages_for_protocol(messages, route.protocol)
+    endpoint_url = route.endpoint_url.rstrip("/")
+    if route.protocol == "anthropic":
+        if not endpoint_url.endswith("/v1/messages"):
+            if endpoint_url.endswith("/v1"):
+                endpoint_url += "/messages"
+            else:
+                endpoint_url += "/v1/messages"
+    else:
+        if not endpoint_url.endswith("/chat/completions"):
+            if endpoint_url.endswith("/v1"):
+                endpoint_url += "/chat/completions"
+            elif endpoint_url.endswith("/responses"):
+                endpoint_url = endpoint_url[: -len("/responses")] + "/chat/completions"
+            else:
+                endpoint_url += "/v1/chat/completions"
     if route.protocol == "anthropic":
         headers = {
             "x-api-key": api_key,
@@ -95,7 +110,7 @@ def upstream_request(route: SupplierRoute, messages: list, stream: bool = False,
             "Accept": "application/json",
         }
         payload = build_openai_payload(route.model_name, route, messages, stream, extra_body)
-    return route.endpoint_url, headers, payload
+    return endpoint_url, headers, payload
 
 
 def normalize_anthropic_response(platform_model: str, response: dict) -> dict:

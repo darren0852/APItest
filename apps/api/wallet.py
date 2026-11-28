@@ -112,12 +112,11 @@ MODEL_PRICES = {
 
 
 def get_model_price(db, model: str) -> dict:
-    from pricing import CustomerPrice, DailyMultiplier, parse_hourly_multipliers
+    from pricing import CustomerPrice, ensure_daily_multiplier, parse_hourly_multipliers
     current = db.query(CustomerPrice).filter(CustomerPrice.model == model, CustomerPrice.is_current == 1).first()
     if current:
         business_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
-        multiplier_row = db.query(DailyMultiplier).filter(DailyMultiplier.model == model, DailyMultiplier.business_date == business_date).first()
-        hourly_multipliers = parse_hourly_multipliers(multiplier_row.hourly_multipliers if multiplier_row else None)
+        hourly_multipliers = ensure_daily_multiplier(db, model, business_date)
         hour = datetime.now(timezone(timedelta(hours=8))).hour
         current_multiplier = hourly_multipliers[hour]
         return {

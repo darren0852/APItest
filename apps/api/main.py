@@ -19,7 +19,7 @@ from auth import hash_password, verify_password, create_jwt, decode_jwt
 from customer_keys import KEY_MANAGER
 from wallet import WALLET_SERVICE, get_model_price
 from plans import Plan, Entitlement, PlanService
-from pricing import CustomerPrice, DailyMultiplier, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, parse_hourly_multipliers
+from pricing import CustomerPrice, DailyMultiplier, ModelGroup, ModelMultiplier, ProviderPrice, Supplier, SupplierRoute, ensure_daily_multipliers_for_days, ensure_daily_multiplier, local_business_date, parse_hourly_multipliers
 from protocol import anthropic_event_to_openai_chunks
 from admin import router as admin_router
 from rate_limit import RATE_LIMITER
@@ -344,7 +344,12 @@ async def public_models():
     try:
         groups = db.query(ModelGroup).order_by(ModelGroup.sort_order, ModelGroup.id).all()
         prices = db.query(CustomerPrice).filter(CustomerPrice.is_current == 1, CustomerPrice.group_name.isnot(None)).order_by(CustomerPrice.model).all()
-        multipliers = {item.model: parse_hourly_multipliers(item.hourly_multipliers) for item in db.query(ModelMultiplier).all()}
+        business_date = local_business_date()
+        model_multipliers = {item.model: parse_hourly_multipliers(item.hourly_multipliers) for item in db.query(ModelMultiplier).all()}
+        daily_multipliers = {
+            row.model: parse_hourly_multipliers(row.hourly_multipliers)
+            for row in db.query(DailyMultiplier).filter(DailyMultiplier.business_date == business_date).all()
+        }
         grouped = {group.name: [] for group in groups}
         for price in prices:
             if price.group_name not in grouped:
@@ -358,7 +363,7 @@ async def public_models():
                 "official": ([round(value * 0.62, 2) for value in OFFICIAL_PRICE_SEED[price.model]]
                              if price.model in OFFICIAL_PRICE_SEED else None),
                 "peak_multiplier": PEAK_MULTIPLIER_SEED.get(price.model, 1.0),
-                "hourly_multipliers": multipliers.get(price.model, parse_hourly_multipliers(None)),
+                "hourly_multipliers": daily_multipliers.get(price.model, model_multipliers.get(price.model, parse_hourly_multipliers(None))),
             })
         return [{"group_name": group.name, "models": grouped[group.name]} for group in groups]
     finally:
@@ -370,6 +375,7 @@ async def model_multiplier_history(model: str):
     try:
         sgt = timezone(timedelta(hours=8))
         now = datetime.now(sgt)
+        ensure_daily_multiplier(db, model)
         points = []
         date_values = list({(now - timedelta(hours=offset)).date().isoformat() for offset in range(24)})
         daily_rows = db.query(DailyMultiplier).filter(
@@ -400,6 +406,11 @@ async def startup():
     seed_plans()
     seed_model_prices()
     seed_internal_supplier()
+    db = SessionLocal()
+    try:
+        ensure_daily_multipliers_for_days(db, 7)
+    finally:
+        db.close()
 
 @app.get("/health")
 async def health():
